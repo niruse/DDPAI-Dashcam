@@ -1,0 +1,20 @@
+{
+  "domain": "ddpai",
+  "name": "DDPAI Dashcam",
+  "codeowners": [
+    "@niruse"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "http"
+  ],
+  "after_dependencies": [
+    "media_source"
+  ],
+  "documentation": "https://github.com/niruse/DDPAI-Dashcam",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/niruse/DDPAI-Dashcam/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

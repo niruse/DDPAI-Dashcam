@@ -1,0 +1,231 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sign in to DDPAI",
+        "description": "Use the same login (email or phone) and password as the DDPAI app. Only cameras with a 4G link (SIM or 4G cloud box) appear in Home Assistant.",
+        "data": {
+          "username": "Email or phone",
+          "password": "Password",
+          "country": "Country code"
+        },
+        "data_description": {
+          "country": "Two-letter code the app sends with every request, e.g. US or GB."
+        }
+      },
+      "reauth_confirm": {
+        "title": "DDPAI password changed",
+        "description": "The saved password for {username} was refused. Enter the current one.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Wrong password.",
+      "unknown_user": "No DDPAI account with that login.",
+      "not_activated": "This account's email address has not been activated yet.",
+      "locked": "The account is locked. Unlock it in the DDPAI app first.",
+      "cannot_connect": "Could not reach the DDPAI cloud."
+    },
+    "abort": {
+      "already_configured": "This DDPAI account is already set up.",
+      "no_4g_camera": "No camera with a 4G link is bound to this account.",
+      "wrong_account": "That password belongs to a different account.",
+      "reauth_successful": "Signed in again."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "DDPAI options",
+        "data": {
+          "scan_interval": "Poll interval",
+          "enable_media_browser": "Show the cloud album in the media browser"
+        },
+        "data_description": {
+          "scan_interval": "How often state and position are read from the cloud."
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": {
+        "name": "4G link"
+      },
+      "inside_fence": {
+        "name": "Geofence {name}"
+      }
+    },
+    "image": {
+      "parked_front": {
+        "name": "Parked photo front"
+      },
+      "parked_rear": {
+        "name": "Parked photo rear"
+      },
+      "parked_cabin": {
+        "name": "Parked photo cabin"
+      },
+      "urgent_front": {
+        "name": "Urgent event front"
+      },
+      "urgent_rear": {
+        "name": "Urgent event rear"
+      },
+      "urgent_cabin": {
+        "name": "Urgent event cabin"
+      }
+    },
+    "sensor": {
+      "state": {
+        "name": "State",
+        "state": {
+          "driving": "Driving",
+          "standby": "Standby",
+          "parking": "Parking mode",
+          "offline": "Offline",
+          "unknown": "Unknown"
+        }
+      },
+      "last_event": {
+        "name": "Last event",
+        "state": {
+          "power_on": "Powered on",
+          "power_off": "Powered off",
+          "collision": "Collision",
+          "parking_collision": "Collision while parked",
+          "remote_link": "Remote connection",
+          "remote_parking": "Switched to parking mode",
+          "remote_standby": "Switched to standby",
+          "high_temperature": "High temperature",
+          "low_battery": "Low battery"
+        }
+      },
+      "last_event_time": {
+        "name": "Last event time"
+      },
+      "last_parked_photo": {
+        "name": "Last parked photo"
+      },
+      "last_urgent_event": {
+        "name": "Last urgent event"
+      },
+      "sim": {
+        "name": "SIM card"
+      },
+      "data_used_month": {
+        "name": "Data used this month"
+      },
+      "data_remaining": {
+        "name": "Data remaining"
+      },
+      "data_total": {
+        "name": "Data plan size"
+      },
+      "data_plan_expiry": {
+        "name": "Data plan expires"
+      },
+      "geofences": {
+        "name": "Geofences"
+      }
+    }
+  },
+  "services": {
+    "add_geofence": {
+      "name": "Add geofence",
+      "description": "Create a geofence on the camera (it appears in the DDPAI app too).",
+      "fields": {
+        "device_id": {
+          "name": "Camera",
+          "description": "The DDPAI camera."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Name shown in the DDPAI app."
+        },
+        "latitude": {
+          "name": "Latitude",
+          "description": "Center of the fence. Leave empty to use the car's last position."
+        },
+        "longitude": {
+          "name": "Longitude",
+          "description": "Center of the fence. Leave empty to use the car's last position."
+        },
+        "radius": {
+          "name": "Radius",
+          "description": "Radius in metres."
+        },
+        "notify_on": {
+          "name": "Notify on",
+          "description": "When the DDPAI app alerts you: when the car enters or when it leaves the fence."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Whether the fence is active."
+        }
+      }
+    },
+    "update_geofence": {
+      "name": "Update geofence",
+      "description": "Change, enable or disable a geofence. Fields left empty keep their current value.",
+      "fields": {
+        "device_id": {
+          "name": "Camera",
+          "description": "The DDPAI camera."
+        },
+        "geofence_id": {
+          "name": "Geofence ID",
+          "description": "From the geofence_id attribute of the camera's Geofence sensors."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Name shown in the DDPAI app."
+        },
+        "latitude": {
+          "name": "Latitude",
+          "description": "New center latitude."
+        },
+        "longitude": {
+          "name": "Longitude",
+          "description": "New center longitude."
+        },
+        "radius": {
+          "name": "Radius",
+          "description": "Radius in metres."
+        },
+        "notify_on": {
+          "name": "Notify on",
+          "description": "When the DDPAI app alerts you: when the car enters or when it leaves the fence."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Whether the fence is active."
+        }
+      }
+    },
+    "delete_geofence": {
+      "name": "Delete geofence",
+      "description": "Delete a geofence from the camera.",
+      "fields": {
+        "device_id": {
+          "name": "Camera",
+          "description": "The DDPAI camera."
+        },
+        "geofence_id": {
+          "name": "Geofence ID",
+          "description": "From the geofence_id attribute of the camera's Geofence sensors."
+        }
+      }
+    }
+  },
+  "selector": {
+    "notify_on": {
+      "options": {
+        "enter": "Car enters",
+        "leave": "Car leaves"
+      }
+    }
+  }
+}

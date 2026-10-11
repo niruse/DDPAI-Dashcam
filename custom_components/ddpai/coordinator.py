@@ -1,0 +1,309 @@
+"""DataUpdateCoordinator for the DDPAI Dashcam integration."""
+from __future__ import annotations
+
+import json
+import logging
+import time
+from datetime import timedelta
+from typing import Any
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
+from .api import DdpaiApiClient, DdpaiAuthError, DdpaiConnectionError, DdpaiError
+from .const import (
+    ALBUM_PAGE_SIZE,
+    ALBUM_REFRESH_SECONDS,
+    ALBUMS,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
+    FENCE_REFRESH_SECONDS,
+    DOMAIN,
+    ERR_BAD_PASSWORD,
+    ERR_USER_LOCKED,
+    ERR_USER_NOT_FOUND,
+    EVENT_DEVICE,
+    EVENT_NEW_MEDIA,
+    EVENT_TYPES,
+    RES_TYPES,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+# How often the SIM state is read; it changes on the scale of months.
+SIM_REFRESH_SECONDS = 6 * 3600
+# Logins refused for these reasons need the user, not a retry.
+_FATAL_LOGIN = {ERR_BAD_PASSWORD, ERR_USER_NOT_FOUND, ERR_USER_LOCKED}
+
+
+def dev_config(info: dict[str, Any]) -> dict[str, Any]:
+    """The device's ``devConfig`` capability blob, decoded."""
+    raw = info.get("devConfig")
+    if isinstance(raw, dict):
+        return raw
+    try:
+        value = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def is_cloud_camera(info: dict[str, Any]) -> bool:
+    """True for cameras that report to the cloud over 4G (have a SIM / 4G test)."""
+    config = dev_config(info)
+    return bool(
+        info.get("iccid")
+        or info.get("simIccid")
+        or info.get("p2p")
+        or config.get("support4GNetTest")
+    )
+
+
+def media_kind(item: dict[str, Any]) -> tuple[str, str]:
+    """(camera, "image"|"video") of an album item."""
+    res = (item.get("content") or {}).get("resType")
+    try:
+        return RES_TYPES.get(int(res), ("unknown", "image"))
+    except (TypeError, ValueError):
+        return ("unknown", "image")
+
+
+class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
+    """Poll the account's 4G cameras.
+
+    ``data`` maps camera uuid to ``{"info", "status", "events", "album", "sim"}``.
+    ``album`` maps album tab (74 parked photos, 54 urgent events) to the newest
+    page of items, newest first.
+    """
+
+    config_entry: ConfigEntry
+
+    def __init__(
+        self, hass: HomeAssistant, entry: ConfigEntry, client: DdpaiApiClient
+    ) -> None:
+        interval = int(entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=DOMAIN,
+            update_interval=timedelta(seconds=interval),
+        )
+        self.client = client
+        # Album items seen so far, by item id, so the media view can find the
+        # file of any item the browser listed (including older pages).
+        self.media: dict[str, dict[str, Any]] = {}
+        self._album_listed_at: dict[str, float] = {}
+        self._sim_read_at: dict[str, float] = {}
+        self._fences_read_at: dict[str, float] = {}
+        self._fences_dirty: set[str] = set()
+        self._seen_events: dict[str, set[tuple[int, int]]] = {}
+        self._seen_media: dict[str, set[str]] = {}
+        # When each camera's reported position last changed (the server sends
+        # no fix time of its own).
+        self._position: dict[str, tuple[float, float, float]] = {}
+        # Cameras on the account without their own 4G link (e.g. the MINI2X
+        # cabin camera of a 3-channel set, whose files arrive via the Z60).
+        self.other_devices: list[dict[str, Any]] = []
+
+    @property
+    def has_cabin_camera(self) -> bool:
+        """True when a cabin camera is bound alongside the 4G camera."""
+        return any(
+            "DR1003" in (d.get("model") or "") or "MINI" in (d.get("deviceName") or "").upper()
+            for d in self.other_devices
+        )
+
+    async def async_refresh_fences(self, uuid: str) -> None:
+        """Re-read a camera's geofences now (after one was changed).
+
+        Read directly rather than through ``async_request_refresh``: that call
+        is debounced, so back-to-back actions would answer with the list from
+        before the change.
+        """
+        if not self.data or uuid not in self.data:
+            return
+        try:
+            fences = await self.client.async_get_fences(uuid)
+        except DdpaiError:
+            self._fences_dirty.add(uuid)  # next poll retries
+            raise
+        self._fences_read_at[uuid] = time.monotonic()
+        self._fences_dirty.discard(uuid)
+        data = dict(self.data)
+        data[uuid] = {**data[uuid], "fences": fences}
+        self.async_set_updated_data(data)
+
+    def position_changed_at(self, uuid: str) -> float | None:
+        """Epoch seconds when the reported position last moved."""
+        pos = self._position.get(uuid)
+        return pos[2] if pos else None
+
+    async def _async_update_data(self) -> dict[str, dict[str, Any]]:
+        try:
+            devices = await self.client.async_get_devices()
+        except DdpaiAuthError as err:
+            if err.code in _FATAL_LOGIN:
+                raise ConfigEntryAuthFailed(str(err)) from err
+            raise UpdateFailed(f"DDPAI login failed: {err}") from err
+        except DdpaiError as err:
+            raise UpdateFailed(f"DDPAI device list failed: {err}") from err
+
+        self.other_devices = [d for d in devices if not is_cloud_camera(d)]
+        previous = self.data or {}
+        result: dict[str, dict[str, Any]] = {}
+        for info in devices:
+            uuid = info.get("uuid")
+            if not uuid or not is_cloud_camera(info):
+                continue
+            old = previous.get(uuid, {})
+            cam: dict[str, Any] = {
+                "info": info,
+                "status": old.get("status", {}),
+                "events": old.get("events", []),
+                "album": old.get("album", {}),
+                "sim": old.get("sim", {}),
+                "flow": old.get("flow", []),
+                "fences": old.get("fences", []),
+                "album_unread": old.get("album_unread", 0),
+                "errors": {},
+            }
+            try:
+                await self._update_camera(uuid, cam)
+            except DdpaiAuthError as err:
+                if err.code in _FATAL_LOGIN:
+                    raise ConfigEntryAuthFailed(str(err)) from err
+                raise UpdateFailed(f"DDPAI login failed: {err}") from err
+            except DdpaiConnectionError as err:
+                raise UpdateFailed(f"DDPAI cloud unreachable: {err}") from err
+            result[uuid] = cam
+        return result
+
+    async def _update_camera(self, uuid: str, cam: dict[str, Any]) -> None:
+        info = cam["info"]
+        try:
+            cam["status"] = await self.client.async_get_status(uuid)
+            self._note_position(uuid, cam["status"])
+        except (DdpaiConnectionError, DdpaiAuthError):
+            raise
+        except DdpaiError as err:
+            cam["errors"]["status"] = str(err)
+
+        try:
+            events = await self.client.async_get_events(uuid)
+            cam["events"] = sorted(events, key=lambda e: e.get("time") or 0, reverse=True)
+            self._fire_new_events(uuid, info, cam["events"])
+        except DdpaiError as err:
+            cam["errors"]["events"] = str(err)
+
+        await self._update_album(uuid, info, cam)
+
+        iccid = info.get("iccid") or info.get("simIccid")
+        now = time.monotonic()
+        if iccid and now - self._sim_read_at.get(uuid, -SIM_REFRESH_SECONDS) >= SIM_REFRESH_SECONDS:
+            try:
+                cam["sim"] = await self.client.async_get_sim(uuid, iccid, info.get("model") or "")
+                self._sim_read_at[uuid] = now
+            except DdpaiError as err:
+                cam["errors"]["sim"] = str(err)
+            try:
+                cam["flow"] = await self.client.async_get_flow_records(iccid)
+            except DdpaiError as err:
+                cam["errors"]["flow"] = str(err)
+
+        if uuid in self._fences_dirty or now - self._fences_read_at.get(uuid, -FENCE_REFRESH_SECONDS) >= FENCE_REFRESH_SECONDS:
+            try:
+                cam["fences"] = await self.client.async_get_fences(uuid)
+                self._fences_read_at[uuid] = now
+                self._fences_dirty.discard(uuid)
+            except DdpaiError as err:
+                cam["errors"]["fences"] = str(err)
+
+    async def _update_album(self, uuid: str, info: dict[str, Any], cam: dict[str, Any]) -> None:
+        try:
+            unread = await self.client.async_album_unread(uuid)
+        except DdpaiError as err:
+            cam["errors"]["album"] = str(err)
+            return
+        cam["album_unread"] = unread
+        now = time.monotonic()
+        stale = now - self._album_listed_at.get(uuid, -ALBUM_REFRESH_SECONDS) >= ALBUM_REFRESH_SECONDS
+        if not (unread or stale or not cam["album"]):
+            return
+        album: dict[int, list[dict[str, Any]]] = {}
+        try:
+            for tab in ALBUMS:
+                items, _pages = await self.client.async_get_album(uuid, tab, 1, ALBUM_PAGE_SIZE)
+                album[tab] = items
+                self.remember_media(uuid, items)
+        except DdpaiError as err:
+            cam["errors"]["album"] = str(err)
+            return
+        cam["album"] = album
+        self._album_listed_at[uuid] = now
+        self._fire_new_media(uuid, info, album)
+
+    def remember_media(self, uuid: str, items: list[dict[str, Any]]) -> None:
+        """Index album items so the media view can serve them."""
+        for item in items:
+            if item.get("id") is not None:
+                self.media[str(item["id"])] = {**item, "uuid": uuid}
+
+    def _note_position(self, uuid: str, status: dict[str, Any]) -> None:
+        lat, lon = status.get("currLatitude"), status.get("currLongitude")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            return
+        old = self._position.get(uuid)
+        if old is None or (round(old[0], 6), round(old[1], 6)) != (round(lat, 6), round(lon, 6)):
+            self._position[uuid] = (lat, lon, time.time())
+
+    def _fire_new_events(
+        self, uuid: str, info: dict[str, Any], events: list[dict[str, Any]]
+    ) -> None:
+        keys = {(e.get("eventType"), e.get("time")) for e in events}
+        seen = self._seen_events.get(uuid)
+        self._seen_events[uuid] = keys
+        if seen is None:  # first poll: remember, don't replay history
+            return
+        for event in events:
+            if (event.get("eventType"), event.get("time")) in seen:
+                continue
+            self.hass.bus.async_fire(
+                EVENT_DEVICE,
+                {
+                    "device_uuid": uuid,
+                    "device_name": info.get("name"),
+                    "event": EVENT_TYPES.get(event.get("eventType"), str(event.get("eventType"))),
+                    "event_type": event.get("eventType"),
+                    "time": event.get("time"),
+                },
+            )
+
+    def _fire_new_media(
+        self, uuid: str, info: dict[str, Any], album: dict[int, list[dict[str, Any]]]
+    ) -> None:
+        ids = {str(i.get("id")) for items in album.values() for i in items}
+        seen = self._seen_media.get(uuid)
+        self._seen_media[uuid] = ids | (seen or set())
+        if seen is None:
+            return
+        for tab, items in album.items():
+            for item in items:
+                if str(item.get("id")) in seen:
+                    continue
+                camera, kind = media_kind(item)
+                self.hass.bus.async_fire(
+                    EVENT_NEW_MEDIA,
+                    {
+                        "device_uuid": uuid,
+                        "device_name": info.get("name"),
+                        "album": ALBUMS.get(tab, str(tab)),
+                        "camera": camera,
+                        "kind": kind,
+                        "item_id": item.get("id"),
+                        "file_name": (item.get("content") or {}).get("fileName"),
+                        "time": item.get("commitDate"),
+                    },
+                )

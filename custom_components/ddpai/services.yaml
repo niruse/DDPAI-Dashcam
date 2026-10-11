@@ -1,0 +1,106 @@
+add_geofence:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: ddpai
+    name:
+      required: true
+      example: Home
+      selector:
+        text:
+    latitude:
+      selector:
+        number:
+          min: -90
+          max: 90
+          step: any
+    longitude:
+      selector:
+        number:
+          min: -180
+          max: 180
+          step: any
+    radius:
+      default: 2000
+      selector:
+        number:
+          min: 100
+          max: 100000
+          step: 100
+          unit_of_measurement: m
+    notify_on:
+      default: leave
+      selector:
+        select:
+          translation_key: notify_on
+          options:
+            - enter
+            - leave
+    enabled:
+      default: true
+      selector:
+        boolean:
+
+update_geofence:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: ddpai
+    geofence_id:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 9999999999
+          mode: box
+    name:
+      selector:
+        text:
+    latitude:
+      selector:
+        number:
+          min: -90
+          max: 90
+          step: any
+    longitude:
+      selector:
+        number:
+          min: -180
+          max: 180
+          step: any
+    radius:
+      selector:
+        number:
+          min: 100
+          max: 100000
+          step: 100
+          unit_of_measurement: m
+    notify_on:
+      selector:
+        select:
+          translation_key: notify_on
+          options:
+            - enter
+            - leave
+    enabled:
+      selector:
+        boolean:
+
+delete_geofence:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: ddpai
+    geofence_id:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 9999999999
+          mode: box
