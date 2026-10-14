@@ -11,7 +11,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import DdpaiConfigEntry
 from .api import DdpaiError
-from .const import RTSP_MODE_TRIGGER
+from homeassistant.helpers import entity_registry as er
+
+from .const import DOMAIN, RTSP_MODE_TRIGGER
 from .coordinator import DdpaiCoordinator
 from .entity import DdpaiEntity
 from .remote_entities import REMOTE_SWITCHES, RemoteSettingEntity, RemoteSwitch, same
@@ -26,7 +28,12 @@ async def async_setup_entry(
         async_add_entities([DdpaiPushSwitch(coordinator, next(iter(coordinator.data)))])
     # Live RTSP video on demand, for the "only when triggered" mode.
     async_add_entities(DdpaiRtspLiveSwitch(coordinator, uuid) for uuid in coordinator.data)
-    # The app's Remote settings.
+    # The app's Remote settings (0.3.0 ids used guessed keys: drop them).
+    registry = er.async_get(hass)
+    for uuid in coordinator.data:
+        for old_id in (f"{uuid}_remote_{k}" for k in ("emervideo_upload", "autoStaticShutdown")):
+            if old := registry.async_get_entity_id("switch", DOMAIN, old_id):
+                registry.async_remove(old)
     async_add_entities(
         DdpaiRemoteSwitch(coordinator, uuid, spec) for uuid in coordinator.data for spec in REMOTE_SWITCHES
     )
@@ -107,7 +114,7 @@ class DdpaiRemoteSwitch(RemoteSettingEntity, SwitchEntity):
         self._spec = spec
         self._key = spec.key
         self._attr_translation_key = spec.translation_key
-        self._attr_unique_id = f"{uuid}_remote_{spec.key}"
+        self._attr_unique_id = f"{uuid}_remote_{spec.translation_key}"
 
     @property
     def is_on(self) -> bool | None:

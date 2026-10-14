@@ -387,8 +387,10 @@ class TutkStream:
             except ValueError:
                 log.warning("unparsable reply: %s", text[:200])
                 continue
-            if str(reply.get("msgId")) != msg_id or reply.get("action") != action:
-                log.info("reply for another request: %s %s", reply.get("action"), reply.get("msgId"))
+            # The camera answers with "msgid" (lower case); the app sends "msgId".
+            reply_id = reply.get("msgId", reply.get("msgid"))
+            if reply.get("action") != action or (reply_id is not None and str(reply_id) != msg_id):
+                log.info("reply for another request: %s %s", reply.get("action"), reply_id)
                 continue
             if merged is None:
                 merged = reply

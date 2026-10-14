@@ -24,7 +24,7 @@ For every camera on the account that has a 4G link:
 | `sensor.<camera>_last_parked_photo` | When the newest parked photo reached the cloud |
 | `image.<camera>_parked_photo_<lens>` | Newest parked photo of each lens |
 | `image.<camera>_urgent_event_<lens>`, `sensor.<camera>_last_urgent_event` | Newest urgent (collision) clip — appear with the first urgent clip |
-| `switch.<camera>_upload_captured_pictures`, `select.<camera>_capture_sensitivity`, `switch.<camera>_shut_down_15_min_after_parking` | The app's *Remote settings* (see [Remote settings](#remote-settings)) |
+| `switch.<camera>_upload_captured_pictures`, `select.<camera>_capture_sensitivity` / `_parking_capture_sensitivity`, `switch.<camera>_shut_down_15_min_after_parking` | The app's *Remote settings* (see [Remote settings](#remote-settings)) |
 | `switch.<camera>_status_change_notifications` | The app's push notifications for power / parking / standby changes |
 | `sensor.<camera>_firmware`, `binary_sensor.<camera>_firmware_update_available` | Installed firmware; newest version and release notes in the attributes |
 | `sensor.<camera>_geofences`, `binary_sensor.<camera>_geofence_<name>` | Geofences, and whether the car is inside each one |
@@ -142,7 +142,8 @@ The settings on the app's *Remote settings* page:
 | Entity | Setting |
 |---|---|
 | `switch.<camera>_upload_captured_pictures` | Upload captured pictures to the cloud album |
-| `select.<camera>_capture_sensitivity` | Collision capture sensitivity: high, medium, low, off |
+| `select.<camera>_capture_sensitivity` | Collision capture sensitivity while driving: high, medium, low, off |
+| `select.<camera>_parking_capture_sensitivity` | The same while parked |
 | `switch.<camera>_shut_down_15_min_after_parking` | Shut down 15 minutes after parking |
 
 They are read from the camera whenever it comes online (and with the *Read remote settings* button

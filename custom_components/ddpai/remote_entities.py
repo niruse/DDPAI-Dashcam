@@ -41,15 +41,21 @@ class RemoteSelect:
     options: dict[str, Any]  # option -> camera value
 
 
-# The three settings of the app's Remote settings page (Z60 Pro, 4G).
+# The app's Remote settings page, keys as a Z60 Pro reports them over 4G
+# (querySettings): auto_upload, autoStaticShutdown, gsensor_mode_100level.
 REMOTE_SWITCHES = (
-    RemoteSwitch("emervideo_upload", "upload_captured_pictures"),
+    RemoteSwitch("auto_upload", "upload_captured_pictures"),
     RemoteSwitch("autoStaticShutdown", "auto_shutdown_after_parking"),
 )
+# Collision sensitivity on the 100-level scale: 100 high, 50 medium, 1 low,
+# 0 off (GsensorHelper in the app).
+_SENSITIVITY = {"high": 100, "medium": 50, "low": 1, "off": 0}
 REMOTE_SELECTS = (
-    # gsensor_mode: 0 high, 1 medium, 2 low, 3 off (GsensorHelper in the app).
-    RemoteSelect("gsensor_mode", "capture_sensitivity", {"high": 0, "medium": 1, "low": 2, "off": 3}),
+    RemoteSelect("gsensor_mode_100level", "capture_sensitivity", _SENSITIVITY),
+    RemoteSelect("gsensor_mode_parking_100level", "parking_capture_sensitivity", _SENSITIVITY),
 )
+# Unique ids of 0.3.0, which used guessed keys.
+OLD_REMOTE_IDS = ("remote_emervideo_upload", "remote_gsensor_mode")
 
 
 def same(a: Any, b: Any) -> bool:
