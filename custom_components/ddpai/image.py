@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from typing import Any
 
@@ -13,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from . import DdpaiConfigEntry
 from .api import DdpaiError
-from .const import ALBUM_PARKED, ALBUM_URGENT, DOMAIN
+from .const import ALBUM_PARKED, ALBUM_URGENT, CONF_PARKED_CAPTURE, DEFAULT_PARKED_CAPTURE, DOMAIN
 from .coordinator import DdpaiCoordinator, media_kind
 from .entity import DdpaiEntity
 from .lastview import LastView, newest_parked
@@ -38,7 +39,11 @@ async def async_setup_entry(
     registry = er.async_get(hass)
     known: set[tuple[str, int, str]] = set()
 
+    capture_on = entry.options.get(CONF_PARKED_CAPTURE, DEFAULT_PARKED_CAPTURE)
+
     def _present(cam: dict[str, Any], album: int, lens: str) -> bool:
+        if capture_on and album == ALBUM_PARKED and lens in ("front", "rear"):
+            return True
         return any(media_kind(i)[0] == lens for i in (cam.get("album") or {}).get(album) or [])
 
     @callback
@@ -96,12 +101,27 @@ class DdpaiAlbumImage(DdpaiEntity, ImageEntity):
         self._cached: bytes | None = None
         self._sync()
 
+    @property
+    def _capture(self) -> dict[str, Any] | None:
+        """Our own parked photo of this lens, when the checkbox says so."""
+        if self._album != ALBUM_PARKED or not self.coordinator.config_entry.options.get(
+            CONF_PARKED_CAPTURE, DEFAULT_PARKED_CAPTURE
+        ):
+            return None
+        return (self.coordinator.parked_captures.get(self._uuid) or {}).get(self._lens)
+
     def _newest(self) -> dict[str, Any] | None:
         items = ((self.camera or {}).get("album") or {}).get(self._album) or []
         mine = [i for i in items if media_kind(i)[0] == self._lens]
         return max(mine, key=lambda i: i.get("commitDate") or 0, default=None)
 
     def _sync(self) -> None:
+        capture = self._capture
+        if capture:
+            taken = dt_util.utc_from_timestamp(capture["time"])
+            if self._attr_image_last_updated != taken:
+                self._attr_image_last_updated = taken
+            return
         item = self._newest()
         if (item or {}).get("id") != (self._item or {}).get("id"):
             self._item = item
@@ -117,10 +137,17 @@ class DdpaiAlbumImage(DdpaiEntity, ImageEntity):
 
     @property
     def available(self) -> bool:
-        return super().available and self._item is not None
+        return super().available and (self._item is not None or self._capture is not None)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        capture = self._capture
+        if capture:
+            return {
+                "source": "taken by Home Assistant when the car stopped",
+                "file_name": os.path.basename(capture["path"]),
+                "taken": dt_util.utc_from_timestamp(capture["time"]).isoformat(),
+            }
         item = self._item or {}
         content = item.get("content") or {}
         taken: datetime | None = self._attr_image_last_updated
@@ -132,6 +159,19 @@ class DdpaiAlbumImage(DdpaiEntity, ImageEntity):
         }
 
     async def async_image(self) -> bytes | None:
+        capture = self._capture
+        if capture:
+
+            def _read() -> bytes | None:
+                try:
+                    with open(capture["path"], "rb") as fh:
+                        return fh.read()
+                except OSError:
+                    return None
+
+            data = await self.hass.async_add_executor_job(_read)
+            if data:
+                return data
         item = self._item
         url = ((item or {}).get("content") or {}).get("url")
         if not url:

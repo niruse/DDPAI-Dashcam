@@ -38,6 +38,14 @@ def _newest(cam: dict[str, Any], album: int) -> dict[str, Any] | None:
     return max(items, key=lambda i: i.get("commitDate") or 0, default=None)
 
 
+def _parked_time(cam: dict[str, Any]) -> datetime | None:
+    """Newest parked photo: ours (checkbox on) or the cloud album's."""
+    captures = cam.get("parked_captures") or {}
+    if captures:
+        return dt_util.utc_from_timestamp(max(c["time"] for c in captures.values()))
+    return _ms((_newest(cam, ALBUM_PARKED) or {}).get("commitDate"))
+
+
 def _event_name(event: dict[str, Any] | None) -> str | None:
     if not event:
         return None
@@ -150,7 +158,7 @@ SENSORS: tuple[DdpaiSensorDescription, ...] = (
         key="last_parked_photo",
         translation_key="last_parked_photo",
         device_class=SensorDeviceClass.TIMESTAMP,
-        value_fn=lambda cam: _ms((_newest(cam, ALBUM_PARKED) or {}).get("commitDate")),
+        value_fn=lambda cam: _parked_time(cam),
     ),
     DdpaiSensorDescription(
         key="last_urgent_event",

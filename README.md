@@ -225,7 +225,11 @@ Home Assistant asks for the new one.
 - **Poll interval** — how often state and position are read (default 60 s, minimum 30 s).
 - **Media browser** — show the cloud album in the media browser (default on).
 - **4G live view cameras** — add the live camera entities (default on).
-- **TUTK SDK license key** — needed for live view, RTSP, Capture and the remote settings.
+- **Take parked photos ourselves** — when the car stops, capture both cameras (a few seconds of
+  4G data) and show those as the *Parked photo* pictures. Off (default): only the photos the camera
+  uploads to the cloud album, which it does only now and then.
+- **TUTK SDK license key** — needed for live view, RTSP, Capture and the remote settings. Leaving
+  the field blank keeps the stored key.
 
 **RTSP / NVR** — mode, cameras on the stream, switch interval, trigger events, driving trigger,
 port and an optional RTSP login (see [RTSP for NVRs](#rtsp-for-nvrs)).

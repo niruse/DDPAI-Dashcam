@@ -40,6 +40,8 @@ from .const import (
     CONF_COUNTRY,
     CONF_ENABLE_LIVE_VIEW,
     CONF_ENABLE_MEDIA_BROWSER,
+    CONF_PARKED_CAPTURE,
+    DEFAULT_PARKED_CAPTURE,
     CONF_SCAN_INTERVAL,
     CONF_TUTK_LICENSE_KEY,
     CONF_RTSP_ALERT_MINUTES,
@@ -264,7 +266,9 @@ class DdpaiOptionsFlow(OptionsFlow):
         """Polling, media browser and live view."""
         if user_input is not None:
             user_input[CONF_SCAN_INTERVAL] = int(user_input[CONF_SCAN_INTERVAL])
-            user_input[CONF_TUTK_LICENSE_KEY] = "".join(user_input.get(CONF_TUTK_LICENSE_KEY, "").split())
+            key = "".join(user_input.get(CONF_TUTK_LICENSE_KEY, "").split())
+            # A blank field keeps the stored key (the form shows it masked).
+            user_input[CONF_TUTK_LICENSE_KEY] = key or self.config_entry.options.get(CONF_TUTK_LICENSE_KEY, "")
             return self.async_create_entry(data={**self.config_entry.options, **user_input})
         options = self.config_entry.options
         return self.async_show_form(
@@ -290,6 +294,10 @@ class DdpaiOptionsFlow(OptionsFlow):
                     vol.Required(
                         CONF_ENABLE_LIVE_VIEW,
                         default=options.get(CONF_ENABLE_LIVE_VIEW, True),
+                    ): BooleanSelector(),
+                    vol.Required(
+                        CONF_PARKED_CAPTURE,
+                        default=options.get(CONF_PARKED_CAPTURE, DEFAULT_PARKED_CAPTURE),
                     ): BooleanSelector(),
                     vol.Optional(
                         CONF_TUTK_LICENSE_KEY,
