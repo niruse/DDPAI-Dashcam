@@ -66,6 +66,23 @@ def app_encrypt(text: str) -> str:
     return (enc.update(data) + enc.finalize()).hex()
 
 
+def app_decrypt(value: str) -> str:
+    """Decrypt an app-key field (AES-128-ECB, hex, zero padded); plain text passes through."""
+    try:
+        raw = bytes.fromhex(value)
+    except ValueError:
+        return value
+    if not raw or len(raw) % 16:
+        return value
+    dec = Cipher(algorithms.AES(APP_KEY), modes.ECB()).decryptor()
+    plain = (dec.update(raw) + dec.finalize()).rstrip(bytes(1))
+    # PKCS7 padding, when the server used it.
+    if plain and plain[-1] <= 16 and plain.endswith(bytes([plain[-1]]) * plain[-1]):
+        plain = plain[: -plain[-1]]
+    text = plain.decode("utf-8", errors="ignore")
+    return text if text and text.isprintable() else value
+
+
 def _info(body: Any) -> Any:
     """Return ``error_info`` from a wrapped reply, decoding it when it is a string."""
     if isinstance(body, dict) and "error_info" in body:
@@ -215,8 +232,25 @@ class DdpaiApiClient:
         info = _info(body)
         if not isinstance(info, dict):
             return {}
-        # The reply also carries remote-live connection fields; drop them.
+        # The reply also carries the live-view credentials; keep them out of
+        # the coordinator data (and so out of diagnostics).
         return {k: v for k, v in info.items() if not k.startswith("p2p")}
+
+    async def async_get_live_credentials(self, uuid: str) -> dict[str, str]:
+        """TUTK UID and AV password of one camera, read fresh for a live session."""
+        body = await self._request(
+            "POST",
+            f"{MICRO_URL}/device/api/v2/device2c/checkDevnetStatus",
+            json_body={"uuid": uuid, "pcode": PCODE},
+        )
+        info = _info(body)
+        if not isinstance(info, dict):
+            return {}
+        return {
+            "uid": info.get("p2pUid") or "",
+            "password": app_decrypt(info.get("p2pSk") or ""),
+            "brand": str(info.get("p2pBrand") or ""),
+        }
 
     async def async_get_events(self, uuid: str) -> list[dict[str, Any]]:
         """Recent power, collision and remote-mode events of one camera."""
@@ -368,6 +402,65 @@ class DdpaiApiClient:
             await self._request(
                 "GET", f"{MICRO_URL}/device/api/v2/device2c/deletePoint/{int(fence_id)}"
             )
+        )
+
+    async def async_get_push_switch(self) -> bool:
+        """Account-wide "push notifications for device status changing"."""
+        body = await self._request("GET", f"{MAIN_URL}/ddpai/api/v1/pushSwitch/getPushSwitch")
+        info = _info(body)
+        if not isinstance(info, dict) or "pushSwitch" not in info:
+            raise DdpaiError(f"Unexpected push switch reply: {str(body)[:200]}")
+        return int(info["pushSwitch"]) == 1
+
+    async def async_set_push_switch(self, on: bool) -> None:
+        """Turn the account's status-change push notifications on or off."""
+        await self._request(
+            "POST",
+            f"{MAIN_URL}/ddpai/api/v1/pushSwitch/changePushSwitch",
+            json_body={"pushSwitch": 1 if on else 0},
+        )
+
+    async def async_check_firmware(self, info: dict[str, Any]) -> dict[str, Any] | None:
+        """Newest firmware the cloud offers for this camera, or None when current."""
+        item: dict[str, Any] = {
+            "model": info.get("model") or "",
+            "version": info.get("version") or "",
+            "countryCode": self._country,
+        }
+        for key in ("sn", "uuid", "iccid"):
+            if info.get(key):
+                item[key] = info[key]
+        body = await self._request(
+            "POST",
+            f"{MICRO_URL}/version/api/v2/version/checkVersion",
+            json_body={"ostype": "android", "data": [item]},
+        )
+        info_ = _info(body)
+        data = info_.get("data") if isinstance(info_, dict) else info_
+        if not isinstance(data, list) or not data:
+            return None
+        return data[0] if isinstance(data[0], dict) else None
+
+    async def async_get_mqtt_server(self) -> dict[str, Any]:
+        """Address and login of the DDPAI MQTT broker the cameras listen on."""
+        body = await self._request(
+            "POST",
+            f"{MICRO_URL}/staticData/api/v1/cloud/mgr/getServerAddress",
+            json_body={"serverType": 1, "envType": 2},
+        )
+        info = _info(body)
+        if isinstance(info, list) and info:
+            info = info[0]
+        if not isinstance(info, dict) or not info.get("ip"):
+            raise DdpaiError(f"Unexpected MQTT server reply: {str(body)[:200]}")
+        return info
+
+    async def async_send_wake_sms(self, iccid: str) -> None:
+        """Ask the cloud to wake the camera with an SMS to its SIM."""
+        await self._request(
+            "POST",
+            f"{MICRO_URL}/sim/api/v1/sim/sendSMS",
+            json_body={"iccid": iccid, "content": ""},
         )
 
     async def async_fetch_media(self, url: str) -> bytes:

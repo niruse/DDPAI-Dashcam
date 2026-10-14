@@ -12,12 +12,16 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
 )
 from homeassistant.const import EntityCategory, UnitOfInformation
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import DdpaiConfigEntry
-from .const import ALBUM_PARKED, ALBUM_URGENT, DEVICE_STATES, EVENT_TYPES, STATE_UNKNOWN
+from .const import ALBUM_PARKED, ALBUM_URGENT, DEVICE_STATES, DOMAIN, EVENT_TYPES, STATE_UNKNOWN
+
+# Shown only when the SIM has a DDPAI-managed data plan.
+PLAN_SENSORS = {"data_used_month", "data_remaining", "data_total", "data_plan_expiry"}
 from .coordinator import DdpaiCoordinator
 from .entity import DdpaiEntity
 from .fence import parse_fence
@@ -192,11 +196,37 @@ async def async_setup_entry(
 ) -> None:
     """Set up sensors for every 4G camera."""
     coordinator = entry.runtime_data
-    async_add_entities(
-        DdpaiSensor(coordinator, uuid, description)
-        for uuid in coordinator.data
-        for description in SENSORS
-    )
+    registry = er.async_get(hass)
+    entities = []
+    pending_urgent: set[str] = set()
+    for uuid, cam in coordinator.data.items():
+        has_plan = (cam.get("sim") or {}).get("totalFlow", 0) > 0
+        for description in SENSORS:
+            if description.key == "last_urgent_event" and not _newest(cam, ALBUM_URGENT):
+                # Appears with the first urgent clip (see below).
+                pending_urgent.add(uuid)
+                if old := registry.async_get_entity_id("sensor", DOMAIN, f"{uuid}_{description.key}"):
+                    registry.async_remove(old)
+                continue
+            if description.key in PLAN_SENSORS and not has_plan:
+                # A SIM without a DDPAI data plan reports only zeros: no
+                # sensor rather than one stuck on "unknown".
+                if old := registry.async_get_entity_id("sensor", DOMAIN, f"{uuid}_{description.key}"):
+                    registry.async_remove(old)
+                continue
+            entities.append(DdpaiSensor(coordinator, uuid, description))
+    async_add_entities(entities)
+
+    urgent = next(d for d in SENSORS if d.key == "last_urgent_event")
+
+    @callback
+    def _add_urgent() -> None:
+        for uuid in list(pending_urgent):
+            if _newest((coordinator.data or {}).get(uuid) or {}, ALBUM_URGENT):
+                pending_urgent.discard(uuid)
+                async_add_entities([DdpaiSensor(coordinator, uuid, urgent)])
+
+    entry.async_on_unload(coordinator.async_add_listener(_add_urgent))
 
 
 class DdpaiSensor(DdpaiEntity, SensorEntity):

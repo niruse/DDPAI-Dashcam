@@ -17,6 +17,11 @@ APP_KEY: Final = b"vYouTech AES_128"
 CONF_COUNTRY: Final = "country"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_ENABLE_MEDIA_BROWSER: Final = "enable_media_browser"
+CONF_ENABLE_LIVE_VIEW: Final = "enable_live_view"
+CONF_TUTK_LICENSE_KEY: Final = "tutk_license_key"
+
+# Live view: TUTK connect auth key the DDPAI app uses for every camera.
+TUTK_AUTH_KEY: Final = "JSzk8b3P"
 
 # Used only when Home Assistant has no country configured.
 DEFAULT_COUNTRY: Final = "US"
@@ -56,7 +61,16 @@ EVENT_TYPES: Final = {
     12: "remote_standby",
     13: "high_temperature",
     16: "low_battery",
+    # Recorded by the integration itself from the polled state (the cloud's
+    # event list stays empty for many cameras; the app's own status-change
+    # notifications are phone pushes, not stored there).
+    "driving": "driving",
+    "standby": "standby",
+    "parking": "parking",
+    "offline": "offline",
 }
+STATE_EVENTS: Final = {1: "driving", 2: "standby", 3: "parking", 4: "offline"}
+MAX_STATE_EVENTS: Final = 20
 
 # Cloud album tabs ("alarmType") and file kinds ("resType").
 ALBUM_PARKED: Final = 74
@@ -78,7 +92,44 @@ NO_POSITION: Final = 99999
 FENCE_COMPANY: Final = "0x10001"
 FENCE_ENTER: Final = 3
 FENCE_LEAVE: Final = 2
-FENCE_REFRESH_SECONDS: Final = 900
+FENCE_REFRESH_SECONDS: Final = 300
 
 EVENT_NEW_MEDIA: Final = f"{DOMAIN}_new_media"
+
+# --- RTSP output for NVRs (same design as the Proof Plus integration) ------
+CONF_RTSP_MODE: Final = "rtsp_mode"
+CONF_RTSP_PORT: Final = "rtsp_port"
+CONF_RTSP_CAMERA: Final = "rtsp_camera"
+CONF_RTSP_ALTERNATE: Final = "rtsp_alternate_seconds"
+CONF_RTSP_USERNAME: Final = "rtsp_username"
+CONF_RTSP_PASSWORD: Final = "rtsp_password"
+CONF_RTSP_ALERTS: Final = "rtsp_alerts"
+CONF_RTSP_ALERT_MINUTES: Final = "rtsp_alert_minutes"
+CONF_RTSP_DRIVING: Final = "rtsp_driving"
+CONF_RTSP_DRIVING_GRACE: Final = "rtsp_driving_grace"
+
+# off: no RTSP server. trigger: live video only while something triggered it,
+# the standby picture otherwise. always: live video whenever an NVR pulls it.
+RTSP_MODE_OFF: Final = "off"
+RTSP_MODE_TRIGGER: Final = "trigger"
+RTSP_MODE_ALWAYS: Final = "always"
+RTSP_MODES: Final = [RTSP_MODE_OFF, RTSP_MODE_TRIGGER, RTSP_MODE_ALWAYS]
+DEFAULT_RTSP_MODE: Final = RTSP_MODE_OFF
+# Not Proof's 8564, so both integrations can serve an NVR from one box.
+DEFAULT_RTSP_PORT: Final = 8565
+RTSP_CAMERAS: Final = ["front", "rear", "both"]
+DEFAULT_RTSP_CAMERA: Final = "both"
+DEFAULT_RTSP_ALTERNATE: Final = 15
+# Device events (EVENT_TYPES names) and "urgent_file" (a new urgent clip in
+# the cloud album) that start live video.
+RTSP_ALERT_TYPES: Final = [
+    "collision", "parking_collision", "urgent_file", "power_on",
+    "remote_link", "high_temperature", "low_battery",
+]
+DEFAULT_RTSP_ALERTS: Final = ["collision", "parking_collision", "urgent_file"]
+DEFAULT_RTSP_ALERT_MINUTES: Final = 5
+DEFAULT_RTSP_DRIVING: Final = True
+DEFAULT_RTSP_DRIVING_GRACE: Final = 2
+# Options applied on the fly (no reload).
+RUNTIME_OPTIONS: Final = {CONF_RTSP_MODE}
 EVENT_DEVICE: Final = f"{DOMAIN}_device_event"

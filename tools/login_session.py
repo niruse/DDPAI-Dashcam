@@ -4,7 +4,7 @@ Run it yourself in a terminal:  python tools/login_session.py
 It asks for your DDPAI app login (email or phone) and password. The password is
 read with getpass, sent only to https://apphw.ddpai.com/login, and never printed
 or written to disk. Only the session cookie and user id are saved, to
-..\\ddpai-private\\session.json (outside the repo).
+session.json in the current directory (keep it out of the repository).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ BASE = "https://apphw.ddpai.com"
 # login name and password AES-128-ECB/PKCS5 encrypted with it, hex encoded.
 APP_KEY = b"vYouTech AES_128"
 PCODE = "0x1002"  # overseas app build
-OUT = Path(__file__).resolve().parents[2] / "ddpai-private" / "session.json"
+OUT = Path.cwd() / "session.json"
 
 
 def app_encrypt(text: str) -> str:

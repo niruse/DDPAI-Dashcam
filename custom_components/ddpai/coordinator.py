@@ -10,6 +10,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DdpaiApiClient, DdpaiAuthError, DdpaiConnectionError, DdpaiError
@@ -27,13 +28,17 @@ from .const import (
     EVENT_DEVICE,
     EVENT_NEW_MEDIA,
     EVENT_TYPES,
+    MAX_STATE_EVENTS,
     RES_TYPES,
+    STATE_EVENTS,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 # How often the SIM state is read; it changes on the scale of months.
 SIM_REFRESH_SECONDS = 6 * 3600
+FIRMWARE_REFRESH_SECONDS = 12 * 3600
+PUSH_REFRESH_SECONDS = 1800
 # Logins refused for these reasons need the user, not a retry.
 _FATAL_LOGIN = {ERR_BAD_PASSWORD, ERR_USER_NOT_FOUND, ERR_USER_LOCKED}
 
@@ -95,11 +100,36 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         # Album items seen so far, by item id, so the media view can find the
         # file of any item the browser listed (including older pages).
         self.media: dict[str, dict[str, Any]] = {}
+        # uuid -> live.LiveStream, created on the first viewer.
+        self.live_streams: dict[str, Any] = {}
+        # uuid -> lens the live view shows ("front" / "rear").
+        self.live_lens: dict[str, str] = {}
+        # Remote settings read over P2P (uuid -> {key: value}), and one P2P
+        # request at a time per camera.
+        self.remote_settings: dict[str, dict[str, Any]] = {}
+        self.remote_settings_read_at: dict[str, float] = {}
+        # Cameras whose settings were read during the current online period.
+        self._settings_read_online: set[str] = set()
+        self.p2p_locks: dict[str, Any] = {}
+        # The RTSP output for NVRs (rtsp.DdpaiRtsp), and the options it runs with.
+        self.rtsp: Any = None
+        self.applied_options: dict[str, Any] = {}
         self._album_listed_at: dict[str, float] = {}
         self._sim_read_at: dict[str, float] = {}
+        self._firmware_read_at: dict[str, float] = {}
+        self._push_read_at: float | None = None
+        # Account-wide "push notifications for device status changing".
+        self.push_switch: bool | None = None
         self._fences_read_at: dict[str, float] = {}
         self._fences_dirty: set[str] = set()
         self._seen_events: dict[str, set[tuple[int, int]]] = {}
+        # State changes seen by polling, newest first, per camera — kept in
+        # storage with the last state seen, so a restart neither forgets them
+        # nor misses a change made while Home Assistant was down.
+        self._state_events: dict[str, list[dict[str, Any]]] = {}
+        self._last_state: dict[str, int] = {}
+        self._store: Store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.events")
+        self._store_loaded = False
         self._seen_media: dict[str, set[str]] = {}
         # When each camera's reported position last changed (the server sends
         # no fix time of its own).
@@ -142,6 +172,13 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         return pos[2] if pos else None
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
+        if not self._store_loaded:
+            self._store_loaded = True
+            stored = await self._store.async_load() or {}
+            self._state_events = stored.get("events") or {}
+            self._last_state = {k: int(v) for k, v in (stored.get("state") or {}).items()}
+            self.remote_settings = stored.get("settings") or {}
+            self.remote_settings_read_at = stored.get("settings_read_at") or {}
         try:
             devices = await self.client.async_get_devices()
         except DdpaiAuthError as err:
@@ -168,6 +205,7 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 "flow": old.get("flow", []),
                 "fences": old.get("fences", []),
                 "album_unread": old.get("album_unread", 0),
+                "firmware": old.get("firmware"),
                 "errors": {},
             }
             try:
@@ -179,20 +217,41 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             except DdpaiConnectionError as err:
                 raise UpdateFailed(f"DDPAI cloud unreachable: {err}") from err
             result[uuid] = cam
+        await self._update_push_switch()
         return result
+
+    async def _update_push_switch(self) -> None:
+        now = time.monotonic()
+        if self._push_read_at is not None and now - self._push_read_at < PUSH_REFRESH_SECONDS:
+            return
+        try:
+            self.push_switch = await self.client.async_get_push_switch()
+            self._push_read_at = now
+        except DdpaiError as err:
+            _LOGGER.debug("Push switch not read: %s", err)
+
+    async def async_set_push_switch(self, on: bool) -> None:
+        """Change the account's status-change push notifications."""
+        await self.client.async_set_push_switch(on)
+        self.push_switch = on
+        self._push_read_at = time.monotonic()
+        self.async_update_listeners()
 
     async def _update_camera(self, uuid: str, cam: dict[str, Any]) -> None:
         info = cam["info"]
+        before = (cam.get("status") or {}).get("status", self._last_state.get(uuid))
         try:
             cam["status"] = await self.client.async_get_status(uuid)
             self._note_position(uuid, cam["status"])
+            self._note_state(uuid, before, cam["status"])
+            self._maybe_read_settings(uuid, cam["status"])
         except (DdpaiConnectionError, DdpaiAuthError):
             raise
         except DdpaiError as err:
             cam["errors"]["status"] = str(err)
 
         try:
-            events = await self.client.async_get_events(uuid)
+            events = await self.client.async_get_events(uuid) + self._state_events.get(uuid, [])
             cam["events"] = sorted(events, key=lambda e: e.get("time") or 0, reverse=True)
             self._fire_new_events(uuid, info, cam["events"])
         except DdpaiError as err:
@@ -212,6 +271,13 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 cam["flow"] = await self.client.async_get_flow_records(iccid)
             except DdpaiError as err:
                 cam["errors"]["flow"] = str(err)
+
+        if now - self._firmware_read_at.get(uuid, -FIRMWARE_REFRESH_SECONDS) >= FIRMWARE_REFRESH_SECONDS:
+            try:
+                cam["firmware"] = await self.client.async_check_firmware(info) or {}
+                self._firmware_read_at[uuid] = now
+            except DdpaiError as err:
+                cam["errors"]["firmware"] = str(err)
 
         if uuid in self._fences_dirty or now - self._fences_read_at.get(uuid, -FENCE_REFRESH_SECONDS) >= FENCE_REFRESH_SECONDS:
             try:
@@ -250,6 +316,82 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         for item in items:
             if item.get("id") is not None:
                 self.media[str(item["id"])] = {**item, "uuid": uuid}
+
+    def _note_state(self, uuid: str, before: Any, status: dict[str, Any]) -> None:
+        """Record a change of the polled state (driving, parking, ...) as an event."""
+        now = status.get("status")
+        if now not in STATE_EVENTS:
+            return
+        events = self._state_events.setdefault(uuid, [])
+        # The very first time, record the current state so there is a value.
+        if now == before and events:
+            return
+        when = status.get("currTime")
+        if not isinstance(when, (int, float)) or when <= 0:
+            when = int(time.time() * 1000)
+        if events and events[0].get("eventType") == STATE_EVENTS[now]:
+            self._last_state[uuid] = now
+            return
+        events.insert(0, {"eventType": STATE_EVENTS[now], "time": int(when), "recordType": "state"})
+        del events[MAX_STATE_EVENTS:]
+        self._last_state[uuid] = now
+        self._save_store()
+
+    def _save_store(self) -> None:
+        self._store.async_delay_save(
+            lambda: {
+                "events": self._state_events,
+                "state": self._last_state,
+                "settings": self.remote_settings,
+                "settings_read_at": self.remote_settings_read_at,
+            },
+            5,
+        )
+
+    async def async_read_remote_settings(self, uuid: str) -> dict[str, Any]:
+        """Read every remote setting from the camera (it must be online)."""
+        from .remote import async_p2p_request, setting_values
+
+        reply = await async_p2p_request(self.hass, self, uuid, "querySettings", {"all": {}})
+        values = setting_values(reply)
+        if values:
+            self.remote_settings[uuid] = values
+            self.remote_settings_read_at[uuid] = time.time()
+            self._save_store()
+            self.async_update_listeners()
+        return values
+
+    async def async_save_remote_setting(self, uuid: str, key: str, value: Any) -> None:
+        """Change one remote setting on the camera (it must be online)."""
+        from .remote import RemoteError, async_p2p_request
+
+        reply = await async_p2p_request(self.hass, self, uuid, "saveSettings", {key: value})
+        if reply.get("resultCode") not in (0, "0", None):
+            raise RemoteError(f"result {reply.get('resultCode')} {reply.get('resultDesc') or ''}".strip())
+        self.remote_settings.setdefault(uuid, {})[key] = value
+        self._save_store()
+        self.async_update_listeners()
+
+    def _maybe_read_settings(self, uuid: str, status: dict[str, Any]) -> None:
+        """Read the remote settings once each time the camera comes online."""
+        online = status.get("mqtt") == 1 and status.get("status") in (1, 2, 3)
+        if not online:
+            self._settings_read_online.discard(uuid)
+            return
+        if uuid in self._settings_read_online:
+            return
+        self._settings_read_online.add(uuid)
+
+        async def _read() -> None:
+            from .remote import RemoteError
+
+            try:
+                await self.async_read_remote_settings(uuid)
+            except RemoteError as err:
+                _LOGGER.debug("Remote settings not read: %s", err)
+                self._settings_read_online.discard(uuid)  # next poll retries
+
+        self.hass.async_create_background_task(_read(), f"{DOMAIN} read settings {uuid}")
 
     def _note_position(self, uuid: str, status: dict[str, Any]) -> None:
         lat, lon = status.get("currLatitude"), status.get("currLongitude")

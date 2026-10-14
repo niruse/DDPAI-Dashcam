@@ -1,4 +1,4 @@
-"""Actions for the DDPAI Dashcam integration: manage the camera's geofences."""
+"""Actions for the DDPAI Dashcam integration: geofences and the RTSP triggers."""
 from __future__ import annotations
 
 from typing import Any
@@ -10,13 +10,17 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 
 from .api import DdpaiError
-from .const import DOMAIN, NO_POSITION
+from .const import DOMAIN, NO_POSITION, RTSP_MODE_TRIGGER
 from .coordinator import DdpaiCoordinator
 from .fence import NOTIFY_MODE, build_gps, parse_fence, trigger_mode
 
 SERVICE_ADD = "add_geofence"
 SERVICE_UPDATE = "update_geofence"
 SERVICE_DELETE = "delete_geofence"
+SERVICE_RTSP_TRIGGER = "rtsp_trigger"
+SERVICE_RTSP_STOP = "rtsp_stop"
+SERVICE_READ_SETTINGS = "read_settings"
+ATTR_MINUTES = "minutes"
 
 ATTR_DEVICE = "device_id"
 ATTR_FENCE = "geofence_id"
@@ -52,6 +56,13 @@ UPDATE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_ENABLED): cv.boolean,
     }
 )
+RTSP_TRIGGER_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_DEVICE): vol.Any(cv.string, [cv.string]),
+        vol.Optional(ATTR_MINUTES): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=1440)),
+    }
+)
+RTSP_STOP_SCHEMA = vol.Schema({vol.Optional(ATTR_DEVICE): vol.Any(cv.string, [cv.string])})
 DELETE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_DEVICE): cv.string,
@@ -137,6 +148,51 @@ def async_setup_services(hass: HomeAssistant) -> None:
         except DdpaiError as err:
             raise HomeAssistantError(f"DDPAI refused the delete: {err}") from err
         return await _result(coordinator, uuid)
+
+    def _rtsp_targets(call: ServiceCall) -> list[tuple[Any, str]]:
+        """(RTSP output, camera uuid) pairs an RTSP action is aimed at."""
+        wanted = call.data.get(ATTR_DEVICE)
+        if wanted:
+            ids = [wanted] if isinstance(wanted, str) else wanted
+            pairs = [_camera(hass, device_id) for device_id in ids]
+        else:
+            pairs = [
+                (coordinator, uuid)
+                for coordinator in hass.data.get(DOMAIN, {}).values()
+                if isinstance(coordinator, DdpaiCoordinator)
+                for uuid in coordinator.data or {}
+            ]
+        return [(coordinator.rtsp, uuid) for coordinator, uuid in pairs if coordinator.rtsp is not None]
+
+    async def rtsp_trigger(call: ServiceCall) -> None:
+        targets = [(rtsp, uuid) for rtsp, uuid in _rtsp_targets(call) if rtsp.mode == RTSP_MODE_TRIGGER]
+        if not targets:
+            raise ServiceValidationError("No DDPAI dashcam has RTSP set to 'Only when triggered'")
+        for rtsp, uuid in targets:
+            rtsp.trigger(uuid, call.data.get(ATTR_MINUTES))
+
+    async def rtsp_stop(call: ServiceCall) -> None:
+        for rtsp, uuid in _rtsp_targets(call):
+            rtsp.stop(uuid)
+
+    async def read_settings(call: ServiceCall) -> ServiceResponse:
+        """Read every remote setting from the camera (it must be online)."""
+        from .remote import RemoteError
+
+        coordinator, uuid = _camera(hass, call.data[ATTR_DEVICE])
+        try:
+            values = await coordinator.async_read_remote_settings(uuid)
+        except RemoteError as err:
+            raise HomeAssistantError(f"Could not read the settings: {err}") from err
+        return {"settings": values}
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_READ_SETTINGS, read_settings,
+        schema=vol.Schema({vol.Required(ATTR_DEVICE): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(DOMAIN, SERVICE_RTSP_TRIGGER, rtsp_trigger, schema=RTSP_TRIGGER_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_RTSP_STOP, rtsp_stop, schema=RTSP_STOP_SCHEMA)
 
     for name, handler, schema in (
         (SERVICE_ADD, add_fence, ADD_SCHEMA),
