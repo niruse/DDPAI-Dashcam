@@ -25,6 +25,13 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     async_add_entities(DdpaiOnline(coordinator, uuid) for uuid in coordinator.data)
     async_add_entities(DdpaiRtspLive(coordinator, uuid) for uuid in coordinator.data)
+    async_add_entities(DdpaiFirmwareUpdate(coordinator, uuid) for uuid in coordinator.data)
+    registry = er.async_get(hass)
+    # 0.3.0 had an update entity, listed by Home Assistant as an update that
+    # cannot be installed (the app installs firmware over the camera's Wi-Fi).
+    for uuid in coordinator.data:
+        if old := registry.async_get_entity_id("update", DOMAIN, f"{uuid}_firmware"):
+            registry.async_remove(old)
 
     known: set[tuple[str, str]] = set()
     registry = er.async_get(hass)
@@ -81,6 +88,34 @@ class DdpaiOnline(DdpaiEntity, BinarySensorEntity):
         return {
             "control_link": self.status.get("mqtt") == 1,
             "public_ip": self.info.get("ipAddr"),
+        }
+
+
+class DdpaiFirmwareUpdate(DdpaiEntity, BinarySensorEntity):
+    """On when DDPAI offers newer firmware (install it from the app)."""
+
+    _attr_device_class = BinarySensorDeviceClass.UPDATE
+    _attr_translation_key = "firmware_update"
+
+    def __init__(self, coordinator: DdpaiCoordinator, uuid: str) -> None:
+        super().__init__(coordinator, uuid)
+        self._attr_unique_id = f"{uuid}_firmware_update"
+
+    @property
+    def is_on(self) -> bool | None:
+        offer = (self.camera or {}).get("firmware")
+        if offer is None:
+            return None
+        latest = offer.get("version")
+        return bool(latest) and latest != self.info.get("version")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        offer = (self.camera or {}).get("firmware") or {}
+        return {
+            "installed_version": self.info.get("version"),
+            "latest_version": offer.get("version") or self.info.get("version"),
+            "how_to_install": "In the DDPAI app, connected to the camera's Wi-Fi",
         }
 
 

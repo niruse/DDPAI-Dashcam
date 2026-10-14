@@ -93,6 +93,9 @@
       },
       "rtsp_live": {
         "name": "RTSP live video"
+      },
+      "firmware_update": {
+        "name": "Firmware update available"
       }
     },
     "button": {
@@ -217,6 +220,9 @@
       },
       "geofences": {
         "name": "Geofences"
+      },
+      "firmware": {
+        "name": "Firmware"
       }
     },
     "switch": {
@@ -231,11 +237,6 @@
       },
       "auto_shutdown_after_parking": {
         "name": "Shut down 15 min after parking"
-      }
-    },
-    "update": {
-      "firmware": {
-        "name": "Firmware"
       }
     }
   },
