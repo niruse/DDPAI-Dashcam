@@ -19,6 +19,10 @@ CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_ENABLE_MEDIA_BROWSER: Final = "enable_media_browser"
 CONF_ENABLE_LIVE_VIEW: Final = "enable_live_view"
 CONF_TUTK_LICENSE_KEY: Final = "tutk_license_key"
+# Parked photo: taken by the integration when the car stops (True), or only
+# the cloud album's (False; the camera uploads one only now and then).
+CONF_PARKED_CAPTURE: Final = "parked_capture"
+DEFAULT_PARKED_CAPTURE: Final = False
 
 # Live view: TUTK connect auth key the DDPAI app uses for every camera.
 TUTK_AUTH_KEY: Final = "JSzk8b3P"

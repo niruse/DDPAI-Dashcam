@@ -18,7 +18,9 @@ from .const import (
     ALBUM_PAGE_SIZE,
     ALBUM_REFRESH_SECONDS,
     ALBUMS,
+    CONF_PARKED_CAPTURE,
     CONF_SCAN_INTERVAL,
+    DEFAULT_PARKED_CAPTURE,
     DEFAULT_SCAN_INTERVAL,
     FENCE_REFRESH_SECONDS,
     DOMAIN,
@@ -110,6 +112,8 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self.remote_settings_read_at: dict[str, float] = {}
         # Cameras whose settings were read during the current online period.
         self._settings_read_online: set[str] = set()
+        # Parked photos taken by the integration: uuid -> lens -> {"path", "time"}.
+        self.parked_captures: dict[str, dict[str, dict[str, Any]]] = {}
         self.p2p_locks: dict[str, Any] = {}
         # The RTSP output for NVRs (rtsp.DdpaiRtsp), and the options it runs with.
         self.rtsp: Any = None
@@ -179,6 +183,7 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             self._last_state = {k: int(v) for k, v in (stored.get("state") or {}).items()}
             self.remote_settings = stored.get("settings") or {}
             self.remote_settings_read_at = stored.get("settings_read_at") or {}
+            self.parked_captures = stored.get("parked_captures") or {}
         try:
             devices = await self.client.async_get_devices()
         except DdpaiAuthError as err:
@@ -206,6 +211,11 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 "fences": old.get("fences", []),
                 "album_unread": old.get("album_unread", 0),
                 "firmware": old.get("firmware"),
+                "parked_captures": (
+                    self.parked_captures.get(uuid, {})
+                    if self.config_entry.options.get(CONF_PARKED_CAPTURE, DEFAULT_PARKED_CAPTURE)
+                    else {}
+                ),
                 "errors": {},
             }
             try:
@@ -334,6 +344,8 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             return
         events.insert(0, {"eventType": STATE_EVENTS[now], "time": int(when), "recordType": "state"})
         del events[MAX_STATE_EVENTS:]
+        if before == 1 and now != 1 and self.config_entry.options.get(CONF_PARKED_CAPTURE, DEFAULT_PARKED_CAPTURE):
+            self.hass.async_create_background_task(self._async_parked_capture(uuid), f"{DOMAIN} parked capture {uuid}")
         self._last_state[uuid] = now
         self._save_store()
 
@@ -344,6 +356,7 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 "state": self._last_state,
                 "settings": self.remote_settings,
                 "settings_read_at": self.remote_settings_read_at,
+                "parked_captures": self.parked_captures,
             },
             5,
         )
@@ -371,6 +384,22 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self.remote_settings.setdefault(uuid, {})[key] = value
         self._save_store()
         self.async_update_listeners()
+
+    async def _async_parked_capture(self, uuid: str) -> None:
+        """The car stopped: take the parked photo of each lens ourselves."""
+        from homeassistant.exceptions import HomeAssistantError
+
+        from .remote_entities import async_capture
+
+        for lens in ("front", "rear"):
+            try:
+                path = await async_capture(self.hass, self, uuid, lens)
+            except HomeAssistantError as err:
+                _LOGGER.info("Parked photo (%s) not taken: %s", lens, err)
+                continue
+            self.parked_captures.setdefault(uuid, {})[lens] = {"path": path, "time": time.time()}
+            self._save_store()
+            self.async_update_listeners()
 
     def _maybe_read_settings(self, uuid: str, status: dict[str, Any]) -> None:
         """Read the remote settings once each time the camera comes online."""

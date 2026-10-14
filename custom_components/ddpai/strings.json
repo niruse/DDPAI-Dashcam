@@ -50,12 +50,14 @@
           "scan_interval": "Poll interval",
           "enable_media_browser": "Show the cloud album in the media browser",
           "enable_live_view": "4G live view cameras",
-          "tutk_license_key": "TUTK SDK license key"
+          "tutk_license_key": "TUTK SDK license key",
+          "parked_capture": "Take parked photos ourselves"
         },
         "data_description": {
           "scan_interval": "How often state and position are read from the cloud.",
           "enable_live_view": "Adds a live camera per lens. Watching wakes the camera and uses its 4G data; it stops 15 seconds after the last viewer leaves.",
-          "tutk_license_key": "The ThroughTek SDK license key of the DDPAI app, needed by the P2P library to open a live session."
+          "tutk_license_key": "The ThroughTek SDK license key of the DDPAI app, needed by the P2P library to open a live session.",
+          "parked_capture": "On: when the car stops, Home Assistant captures both cameras (a few seconds of 4G data) and the Parked photo pictures show those. Off: only the photos the camera uploads to the cloud album (it does so only now and then)."
         }
       },
       "rtsp": {
