@@ -1,0 +1,505 @@
+# DDPAI Dashcam — full dashboard example
+#
+# Laid out like the DDPAI app: Home (status + Remote Guard tiles), Live view,
+# Car location, Cloud album, Geofence, Manage data and Settings.
+#
+# How to use:
+#   1. Settings -> Dashboards -> Add dashboard -> "New dashboard from scratch",
+#      URL: ddpai-dashboard  (the Home tiles link to /ddpai-dashboard/<page>).
+#   2. Open it -> pencil -> three dots -> Raw configuration editor, paste this file.
+#   3. Replace `my_dashcam` with your camera's entity prefix (look at any of its
+#      entities, e.g. sensor.z60pro_1234_state -> z60pro_1234), and
+#      YOUR_DDPAI_DEVICE_ID with the camera's device id (Settings -> Devices ->
+#      the camera; it is the last part of the page URL).
+#   4. Some cards use auto-entities (HACS: "auto-entities") to show only the
+#      pictures and data plan sensors your camera actually has.
+#
+# Cards that are not needed can simply be deleted; nothing else depends on them.
+views:
+- title: Home
+  path: home
+  icon: mdi:home
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: My dashcam
+      icon: mdi:cctv
+      heading_style: title
+    - type: markdown
+      content: |-
+        {% set s = states('sensor.my_dashcam_state') %}### {{ {'driving': '🚗 Driving', 'parking': '🅿️ Parking', 'standby': '💤 Standby', 'offline': '⚫ Offline'}.get(s, s | title) }}
+        {% if is_state('binary_sensor.my_dashcam_4g_link', 'on') %}4G connected{% else %}4G not connected — live view wakes the dashcam if it is in standby{% endif %}
+    - type: tile
+      entity: sensor.my_dashcam_last_event
+      name: Last event
+      visibility:
+      - condition: state
+        entity: sensor.my_dashcam_last_event
+        state_not: unknown
+      - condition: state
+        entity: sensor.my_dashcam_last_event
+        state_not: unavailable
+    - type: tile
+      entity: sensor.my_dashcam_last_event_time
+      name: Event time
+      visibility:
+      - condition: state
+        entity: sensor.my_dashcam_last_event_time
+        state_not: unknown
+      - condition: state
+        entity: sensor.my_dashcam_last_event_time
+        state_not: unavailable
+    - type: tile
+      entity: binary_sensor.my_dashcam_firmware_update_available
+      name: New firmware
+  - type: grid
+    cards:
+    - type: heading
+      heading: Remote Guard
+      icon: mdi:shield-car
+      heading_style: title
+    - type: button
+      name: Live view
+      icon: mdi:car
+      show_state: false
+      tap_action:
+        action: navigate
+        navigation_path: /ddpai-dashboard/live
+      grid_options:
+        columns: 6
+        rows: 2
+    - type: button
+      name: Car location
+      icon: mdi:map-marker
+      show_state: false
+      tap_action:
+        action: navigate
+        navigation_path: /ddpai-dashboard/location
+      grid_options:
+        columns: 6
+        rows: 2
+    - type: button
+      name: Cloud album
+      icon: mdi:image-multiple
+      show_state: false
+      tap_action:
+        action: navigate
+        navigation_path: /ddpai-dashboard/album
+      grid_options:
+        columns: 6
+        rows: 2
+    - type: button
+      name: Geofence
+      icon: mdi:vector-square
+      show_state: false
+      tap_action:
+        action: navigate
+        navigation_path: /ddpai-dashboard/geofence
+      grid_options:
+        columns: 6
+        rows: 2
+    - type: button
+      name: Manage data
+      icon: mdi:water-outline
+      show_state: false
+      tap_action:
+        action: navigate
+        navigation_path: /ddpai-dashboard/data
+      grid_options:
+        columns: 6
+        rows: 2
+    - type: button
+      name: Settings
+      icon: mdi:cog
+      show_state: false
+      tap_action:
+        action: navigate
+        navigation_path: /ddpai-dashboard/settings
+      grid_options:
+        columns: 6
+        rows: 2
+  - type: grid
+    cards:
+    - type: heading
+      heading: Last view
+      icon: mdi:camera
+      heading_style: title
+    - type: picture-entity
+      entity: image.my_dashcam_last_view_front
+      name: Front
+      show_state: true
+    - type: picture-entity
+      entity: image.my_dashcam_last_view_rear
+      name: Rear
+      show_state: true
+- title: Live view
+  path: live
+  icon: mdi:car
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    column_span: 2
+    cards:
+    - type: heading
+      heading: Live view
+      icon: mdi:video
+      heading_style: title
+    - type: picture-entity
+      entity: camera.my_dashcam_live_front
+      name: Live front
+      camera_view: auto
+      show_state: false
+      tap_action:
+        action: more-info
+    - type: picture-entity
+      entity: camera.my_dashcam_live_rear
+      name: Live rear
+      camera_view: auto
+      show_state: false
+      tap_action:
+        action: more-info
+    - type: button
+      name: Capture front
+      icon: mdi:camera
+      show_state: false
+      grid_options:
+        columns: 6
+        rows: 1
+      tap_action:
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.my_dashcam_capture_front
+    - type: button
+      name: Capture rear
+      icon: mdi:camera-rear
+      show_state: false
+      grid_options:
+        columns: 6
+        rows: 1
+      tap_action:
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.my_dashcam_capture_rear
+    - type: button
+      name: Record front 30 s
+      icon: mdi:record-rec
+      show_state: false
+      grid_options:
+        columns: 6
+        rows: 1
+      tap_action:
+        action: perform-action
+        perform_action: camera.record
+        target:
+          entity_id: camera.my_dashcam_live_front
+        data:
+          duration: 30
+          lookback: 0
+          filename: /media/ddpai/{{ now().strftime('%Y%m%d_%H%M%S') }}_front.mp4
+        confirmation:
+          text: Record 30 seconds of the front camera to Media → ddpai?
+    - type: button
+      name: Record rear 30 s
+      icon: mdi:record-rec
+      show_state: false
+      grid_options:
+        columns: 6
+        rows: 1
+      tap_action:
+        action: perform-action
+        perform_action: camera.record
+        target:
+          entity_id: camera.my_dashcam_live_rear
+        data:
+          duration: 30
+          lookback: 0
+          filename: /media/ddpai/{{ now().strftime('%Y%m%d_%H%M%S') }}_rear.mp4
+        confirmation:
+          text: Record 30 seconds of the rear camera to Media → ddpai?
+    - type: tile
+      entity: binary_sensor.my_dashcam_4g_link
+      name: 4G connection
+      color: green
+    - type: markdown
+      content: |-
+        Tap a picture to watch that camera live. The dashcam streams one camera at a time, like the app: opening one switches the dashcam to it, and if both are open the other holds its last picture until you open it again. Watching uses the dashcam's 4G data (about 4 Mbit/s) and stops 15 s after you close it.
+
+        {% set e = state_attr('camera.my_dashcam_live_front', 'last_error') %}{% if e %}**Last attempt:** {{ e | replace('ERROR ', '') }}{% endif %}
+- title: Car location
+  path: location
+  icon: mdi:map-marker
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    column_span: 2
+    cards:
+    - type: heading
+      heading: Car location
+      icon: mdi:map
+      heading_style: title
+    - type: map
+      entities:
+      - entity: device_tracker.my_dashcam
+      default_zoom: 16
+      hours_to_show: 48
+      theme_mode: auto
+    - type: tile
+      entity: device_tracker.my_dashcam
+      name: Car
+    - type: tile
+      entity: sensor.my_dashcam_state
+      name: State
+- title: Cloud album
+  path: album
+  icon: mdi:image-multiple
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Parked photos
+      icon: mdi:image-multiple
+      heading_style: title
+    - type: custom:auto-entities
+      show_empty: false
+      card:
+        type: grid
+        columns: 2
+        square: false
+      card_param: cards
+      filter:
+        include:
+        - entity_id: image.my_dashcam_parked_photo_*
+          options:
+            type: picture-entity
+            show_state: true
+    - type: tile
+      entity: sensor.my_dashcam_last_parked_photo
+      name: Last parked photo
+  - type: grid
+    cards:
+    - type: heading
+      heading: Urgent events
+      icon: mdi:alert-decagram
+      heading_style: title
+    - type: custom:auto-entities
+      show_empty: false
+      card:
+        type: grid
+        columns: 2
+        square: false
+      card_param: cards
+      filter:
+        include:
+        - entity_id: image.my_dashcam_urgent_event_*
+          options:
+            type: picture-entity
+            show_state: true
+    - type: custom:auto-entities
+      card:
+        type: entities
+      show_empty: false
+      filter:
+        include:
+        - entity_id: sensor.my_dashcam_last_urgent_event
+    - type: markdown
+      content: '{% if states(''sensor.my_dashcam_last_urgent_event'') in [''unknown'', ''unavailable''] %}No urgent (collision)
+        clips in the cloud album yet.{% endif %}'
+    - type: button
+      name: Browse all files
+      icon: mdi:folder-play
+      tap_action:
+        action: navigate
+        navigation_path: /media-browser/browser
+- title: Geofence
+  path: geofence
+  icon: mdi:vector-square
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    column_span: 2
+    cards:
+    - type: heading
+      heading: Geofence
+      icon: mdi:vector-square
+      heading_style: title
+    - type: markdown
+      content: |-
+        {% set f = state_attr('sensor.my_dashcam_geofences', 'geofences') or [] %}{% if f %}| Name | Radius | Notify | Enabled | ID |
+        |---|---|---|---|---|
+        {% for g in f %}| {{ g.name }} | {{ g.radius }} m | {{ g.notify_on }} | {{ 'yes' if g.enabled else 'no' }} | {{ g.id }} |
+        {% endfor %}{% else %}No geofences yet.{% endif %}
+    - type: custom:auto-entities
+      card:
+        type: entities
+        title: Car inside
+      filter:
+        include:
+        - entity_id: binary_sensor.my_dashcam_geofence_*
+      show_empty: false
+    - type: button
+      name: Add a 2 km geofence around the car
+      icon: mdi:plus-circle
+      tap_action:
+        action: perform-action
+        perform_action: ddpai.add_geofence
+        data:
+          device_id: YOUR_DDPAI_DEVICE_ID
+          name: Car area
+          radius: 2000
+          notify_on: leave
+          enabled: true
+        confirmation:
+          text: Create a 2 km geofence around the car's last position?
+    - type: markdown
+      content: Edit or delete a geofence with **ddpai.update_geofence** / **ddpai.delete_geofence** (Developer tools → Actions)
+        using the ID above. The DDPAI app shows the same fences.
+- title: Manage data
+  path: data
+  icon: mdi:water-outline
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: SIM and data
+      icon: mdi:sim
+      heading_style: title
+    - type: tile
+      entity: sensor.my_dashcam_sim_card
+      name: SIM card
+    - type: custom:auto-entities
+      card:
+        type: entities
+      show_empty: false
+      filter:
+        include:
+        - entity_id: sensor.my_dashcam_data_*
+    - type: markdown
+      content: '{% if states.sensor.my_dashcam_data_used_this_month is none %}This SIM has no DDPAI data plan, so the cloud
+        reports no usage. Live view and RTSP use about 4 Mbit/s of its data while running (≈1.8 GB an hour).{% endif %}'
+- title: Settings
+  path: settings
+  icon: mdi:cog
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Notifications
+      icon: mdi:bell
+      heading_style: title
+    - type: tile
+      entity: switch.my_dashcam_status_change_notifications
+      name: Push notifications for status changes
+      features:
+      - type: toggle
+    - type: markdown
+      content: Power on/off, parking monitoring and sleep/standby changes (the same switch as in the DDPAI app).
+  - type: grid
+    cards:
+    - type: heading
+      heading: Remote settings
+      icon: mdi:tune
+      heading_style: title
+    - type: tile
+      entity: switch.my_dashcam_upload_captured_pictures
+      name: Upload captured pictures
+      features:
+      - type: toggle
+    - type: tile
+      entity: select.my_dashcam_capture_sensitivity
+      name: Capture sensitivity
+      features:
+      - type: select-options
+    - type: tile
+      entity: switch.my_dashcam_shut_down_15_min_after_parking
+      name: Shut down 15 min after parking
+      features:
+      - type: toggle
+    - type: button
+      name: Read from dashcam
+      icon: mdi:refresh
+      show_state: false
+      grid_options:
+        columns: 6
+        rows: 1
+      tap_action:
+        action: perform-action
+        perform_action: button.press
+        target:
+          entity_id: button.my_dashcam_read_remote_settings
+    - type: markdown
+      content: 'The same settings as the app''s *Remote settings*. They are read whenever the dashcam comes online and keep
+        their last value while it is off; changes need the dashcam online.{% set r = state_attr(''switch.my_dashcam_upload_captured_pictures'',
+        ''read_at'') %}{% if r %} Last read: {{ as_timestamp(r) | timestamp_custom(''%d/%m %H:%M'') }}.{% endif %}'
+  - type: grid
+    cards:
+    - type: heading
+      heading: About device
+      icon: mdi:information
+      heading_style: title
+    - type: tile
+      entity: sensor.my_dashcam_firmware
+      name: Firmware
+    - type: tile
+      entity: binary_sensor.my_dashcam_firmware_update_available
+      name: New firmware
+    - type: markdown
+      content: |-
+        Installed **{{ states('sensor.my_dashcam_firmware') }}** · newest **{{ state_attr('sensor.my_dashcam_firmware', 'latest_version') }}**
+
+        {{ state_attr('sensor.my_dashcam_firmware', 'release_notes') or '' }}
+
+        Install from the DDPAI app while connected to the camera's Wi-Fi.
+  - type: grid
+    cards:
+    - type: heading
+      heading: RTSP for NVR
+      icon: mdi:cctv
+      heading_style: title
+    - type: tile
+      entity: select.my_dashcam_rtsp_stream
+      name: RTSP stream
+    - type: tile
+      entity: binary_sensor.my_dashcam_rtsp_live_video
+      name: Live video on RTSP
+    - type: tile
+      entity: switch.my_dashcam_rtsp_live
+      name: Hold live (triggered mode)
+      features:
+      - type: toggle
+      visibility:
+      - condition: state
+        entity: select.my_dashcam_rtsp_stream
+        state: trigger
+    - type: markdown
+      content: |-
+        {% set a = states.binary_sensor.my_dashcam_rtsp_live_video.attributes %}{% if a.url %}**Front:** `{{ a.url }}`
+
+        {% if a.rear_url %}**Rear:** `{{ a.rear_url }}`
+
+        {% endif %}NVR connected: **{{ 'yes' if a.nvr_connected else 'no' }}**{% if a.triggers %} · live because: {{ a.triggers | join(', ') }}{% endif %}{% if a.error %}
+
+        ⚠️ {{ a.error }}{% endif %}{% else %}RTSP is off. Pick *Only when triggered* or *Always* to give your NVR an address.{% endif %}
+  - type: grid
+    cards:
+    - type: heading
+      heading: Events
+      icon: mdi:history
+      heading_style: title
+    - type: markdown
+      content: |-
+        {% set r = state_attr('sensor.my_dashcam_last_event', 'recent') or [] %}{% for e in r[:15] %}- **{{ e.event | replace('_', ' ') }}** · {{ as_timestamp(e.time) | timestamp_custom('%d/%m %H:%M') if e.time else '' }}
+        {% else %}No events yet — state changes (driving, parking, standby, offline) appear here from the next change on.{% endfor %}
