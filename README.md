@@ -60,6 +60,55 @@ Record 30 s), **Car location**, **Cloud album**, **Geofence**, **Manage data** a
 A few cards use [auto-entities](https://github.com/thomasloven/lovelace-auto-entities) (HACS) to show
 only the pictures and sensors your camera has.
 
+> The pictures below are rendered from `examples/dashboard.yaml` itself by
+> [`examples/render_screenshots.py`](examples/render_screenshots.py), with invented placeholder
+> readings and drawn camera pictures — no real location, plate or account data.
+
+### Home
+
+The camera's state and 4G link, the last event, firmware, the app's *Remote Guard* tiles, and the
+newest picture from each camera.
+
+![Home](examples/images/dashboard-home.png)
+
+### Live view
+
+One card per camera: it shows the last picture, and tapping it plays live video. Capture saves a
+picture, Record saves 30 seconds.
+
+![Live view](examples/images/dashboard-live.png)
+
+### Car location
+
+Where the car is now and its recent track.
+
+![Car location](examples/images/dashboard-location.png)
+
+### Cloud album
+
+The newest parked photos and urgent clips from each camera, and a way into the whole album.
+
+![Cloud album](examples/images/dashboard-album.png)
+
+### Geofence
+
+The fences shared with the app, whether the car is inside each one, and a one-tap fence around
+the car.
+
+![Geofence](examples/images/dashboard-geofence.png)
+
+### Manage data
+
+The SIM, and the data plan when the SIM has a DDPAI plan.
+
+![Manage data](examples/images/dashboard-data.png)
+
+### Settings
+
+Status notifications, the app's remote settings, firmware, the RTSP output and the recent events.
+
+![Settings](examples/images/dashboard-settings.png)
+
 ## Live view
 
 `Live front` and `Live rear` stream the camera's picture over its 4G link, the way the app's
