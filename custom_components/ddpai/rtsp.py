@@ -663,6 +663,9 @@ class DdpaiRtsp:
         self._driving_state: dict[str, bool] = {}
         self._feeds: dict[tuple[str, str], DdpaiRtspFeed] = {}
         self._stills: dict[tuple[str, str], tuple[str, bytes]] = {}
+        # Newest parked photo time, and the last live view (JPEG, epoch) per lens.
+        self._parked_at: dict[tuple[str, str], float] = {}
+        self._live_stills: dict[tuple[str, str], tuple[bytes, float]] = {}
         self._server: asyncio.Server | None = None
         self._go2rtc = DdpaiGo2rtc(hass, entry.entry_id)
         # go2rtc proves itself to the feed with this; the feed only listens on
@@ -856,9 +859,14 @@ class DdpaiRtsp:
         return lens
 
     def cached_still(self, uuid: str, lens: str) -> bytes | None:
-        """The newest parked photo of that lens, once fetched (see _on_update)."""
-        cached = self._stills.get((uuid, lens))
-        return cached[1] if cached else None
+        """The newest picture of that lens: the last live view (kept on disk by
+        the live stream) or the newest parked photo, whichever is newer."""
+        key = (uuid, lens)
+        parked = self._stills.get(key)
+        live = self._live_stills.get(key)
+        if live and (not parked or not parked[1] or live[1] >= self._parked_at.get(key, 0)):
+            return live[0]
+        return parked[1] if parked and parked[1] else None
 
     def standby_caption(self, uuid: str, lens: str) -> str:
         """The line written on a lens's standby picture."""
@@ -977,13 +985,25 @@ class DdpaiRtsp:
     @callback
     def _refresh_stills(self, uuid: str, cam: dict[str, Any]) -> None:
         items = (cam.get("album") or {}).get(ALBUM_PARKED) or []
+        stream = get_stream(self.hass, self.coordinator, uuid)
         for lens in LENSES:
+            key = (uuid, lens)
+            live = self._live_stills.get(key)
+            if live is None or stream.last_keyframe_time.get(lens, 0) > live[1]:
+
+                async def _load(key=key, lens=lens) -> None:
+                    snap = await stream.async_snapshot(lens)
+                    if snap is not None:
+                        self._live_stills[key] = snap
+
+                self.hass.async_create_task(_load())
             mine = [i for i in items if media_kind(i) == (lens, "image")]
             item = max(mine, key=lambda i: i.get("commitDate") or 0, default=None)
             url = ((item or {}).get("content") or {}).get("url")
             if not url:
                 continue
             item_id = str(item.get("id"))
+            self._parked_at[(uuid, lens)] = (item.get("commitDate") or 0) / 1000
             cached = self._stills.get((uuid, lens))
             if cached and cached[0] == item_id:
                 continue
