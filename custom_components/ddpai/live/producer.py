@@ -58,6 +58,7 @@ KEEPALIVE_SECONDS = 8
 KEEPLIVE_P2P_SECONDS = 3
 # No frame for this long after the stream started = the camera went away.
 NO_DATA_SECONDS = 30
+FIRST_FRAME_SECONDS = 60
 
 # avRecvFrameData2 results that mean "try again" vs "the session is gone".
 AV_ER_DATA_NOREADY = -20012
@@ -575,6 +576,18 @@ def main() -> int:
 
     out = sys.stdout.buffer
     started = None
+
+    # The native connect can hang far past its own timeout; a session that
+    # has shown no picture after this long is given up (exit, not a hang).
+    first_frame = threading.Event()
+
+    def _watchdog() -> None:
+        if not first_frame.wait(FIRST_FRAME_SECONDS):
+            log.error("no picture within %d s; giving up", FIRST_FRAME_SECONDS)
+            sys.stderr.flush()
+            os._exit(3)
+
+    threading.Thread(target=_watchdog, daemon=True).start()
     last_sps: bytes | None = None
     frames = 0
     try:
@@ -590,6 +603,7 @@ def main() -> int:
             if started is None:
                 if not keyframe:
                     continue  # a decoder can only start on SPS/IDR
+                first_frame.set()
                 started = time.monotonic()
                 log.info("first keyframe, streaming")
             micros = int((time.monotonic() - started) * 1_000_000)
