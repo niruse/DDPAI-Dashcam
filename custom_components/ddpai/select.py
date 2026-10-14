@@ -7,7 +7,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import DdpaiConfigEntry
-from .const import CONF_ENABLE_LIVE_VIEW, RTSP_MODES
+from homeassistant.helpers import entity_registry as er
+
+from .const import CONF_ENABLE_LIVE_VIEW, DOMAIN, RTSP_MODES
 from .coordinator import DdpaiCoordinator
 from .entity import DdpaiEntity
 from .live import LENSES, get_stream
@@ -22,6 +24,10 @@ async def async_setup_entry(
     entities: list[SelectEntity] = []
     if entry.options.get(CONF_ENABLE_LIVE_VIEW, True):
         entities.extend(DdpaiLiveLens(coordinator, uuid) for uuid in coordinator.data)
+    registry = er.async_get(hass)
+    for uuid in coordinator.data:
+        if old := registry.async_get_entity_id("select", DOMAIN, f"{uuid}_remote_gsensor_mode"):
+            registry.async_remove(old)
     entities.extend(
         DdpaiRemoteSelect(coordinator, uuid, spec) for uuid in coordinator.data for spec in REMOTE_SELECTS
     )
@@ -85,7 +91,7 @@ class DdpaiRemoteSelect(RemoteSettingEntity, SelectEntity):
         self._spec = spec
         self._key = spec.key
         self._attr_translation_key = spec.translation_key
-        self._attr_unique_id = f"{uuid}_remote_{spec.key}"
+        self._attr_unique_id = f"{uuid}_remote_{spec.translation_key}"
         self._attr_options = list(spec.options)
 
     @property

@@ -167,6 +167,15 @@
           "low": "Low",
           "off": "Off"
         }
+      },
+      "parking_capture_sensitivity": {
+        "name": "Parking capture sensitivity",
+        "state": {
+          "high": "High",
+          "medium": "Medium",
+          "low": "Low",
+          "off": "Off"
+        }
       }
     },
     "sensor": {
