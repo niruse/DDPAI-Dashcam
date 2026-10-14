@@ -94,6 +94,22 @@ def _flow_attrs(cam: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# checkVersion "suggest".
+URGENCY = {0: "optional", 5: "recommended", 10: "required"}
+
+
+def _firmware_attrs(cam: dict[str, Any]) -> dict[str, Any]:
+    offer = cam.get("firmware") or {}
+    size = offer.get("size")
+    return {
+        "latest_version": offer.get("version") or cam["info"].get("version"),
+        "release_notes": (offer.get("descEn") or offer.get("desc") or None),
+        "urgency": URGENCY.get(offer.get("suggest"), offer.get("suggest")) if offer else None,
+        "size_mb": round(int(size) / 1048576, 1) if str(size or "").isdigit() else None,
+        "how_to_install": "In the DDPAI app, connected to the camera's Wi-Fi",
+    }
+
+
 def _fences(cam: dict[str, Any]) -> dict[str, Any]:
     return {"geofences": [parse_fence(f) for f in cam.get("fences") or []]}
 
@@ -173,6 +189,13 @@ SENSORS: tuple[DdpaiSensorDescription, ...] = (
         translation_key="data_plan_expiry",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda cam: _ms((cam.get("sim") or {}).get("expiryDate")),
+    ),
+    DdpaiSensorDescription(
+        key="firmware",
+        translation_key="firmware",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda cam: cam["info"].get("version"),
+        attrs_fn=_firmware_attrs,
     ),
     DdpaiSensorDescription(
         key="geofences",
