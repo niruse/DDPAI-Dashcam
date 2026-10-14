@@ -12,7 +12,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import DdpaiConfigEntry
-from .const import DOMAIN, NO_POSITION
+from .const import DOMAIN, NO_POSITION, RTSP_MODE_OFF
 from .coordinator import DdpaiCoordinator
 from .entity import DdpaiEntity
 from .fence import distance_m, parse_fence
@@ -24,6 +24,7 @@ async def async_setup_entry(
     """Set up connectivity and one "car inside" sensor per geofence."""
     coordinator = entry.runtime_data
     async_add_entities(DdpaiOnline(coordinator, uuid) for uuid in coordinator.data)
+    async_add_entities(DdpaiRtspLive(coordinator, uuid) for uuid in coordinator.data)
 
     known: set[tuple[str, str]] = set()
     registry = er.async_get(hass)
@@ -144,3 +145,31 @@ class DdpaiInsideFence(DdpaiEntity, BinarySensorEntity):
             "enabled": fence.get("enabled"),
             "distance": round(distance) if distance is not None else None,
         }
+
+
+class DdpaiRtspLive(DdpaiEntity, BinarySensorEntity):
+    """Whether the RTSP stream is carrying live video (off = standby picture).
+
+    The attributes hold the NVR addresses, the active triggers and whether an
+    NVR is connected.
+    """
+
+    _attr_translation_key = "rtsp_live"
+
+    def __init__(self, coordinator, uuid: str) -> None:
+        super().__init__(coordinator, uuid)
+        self._attr_unique_id = f"{uuid}_rtsp_live"
+
+    @property
+    def available(self) -> bool:
+        """Available while the RTSP output is switched on."""
+        rtsp = self.coordinator.rtsp
+        return super().available and rtsp is not None and rtsp.mode != RTSP_MODE_OFF
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.rtsp.is_live(self._uuid)
+
+    @property
+    def extra_state_attributes(self):
+        return self.coordinator.rtsp.state(self._uuid)

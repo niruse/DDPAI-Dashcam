@@ -104,3 +104,34 @@ delete_geofence:
           min: 0
           max: 9999999999
           mode: box
+
+rtsp_trigger:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: ddpai
+          multiple: true
+    minutes:
+      selector:
+        number:
+          min: 0.5
+          max: 1440
+          step: 0.5
+          unit_of_measurement: min
+
+rtsp_stop:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: ddpai
+          multiple: true
+
+read_settings:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: ddpai

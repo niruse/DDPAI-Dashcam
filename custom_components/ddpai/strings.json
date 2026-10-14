@@ -7,10 +7,10 @@
         "data": {
           "username": "Email or phone",
           "password": "Password",
-          "country": "Country code"
+          "country": "Country"
         },
         "data_description": {
-          "country": "Two-letter code the app sends with every request, e.g. US or GB."
+          "country": "The country your DDPAI account is registered in."
         }
       },
       "reauth_confirm": {
@@ -39,12 +39,46 @@
     "step": {
       "init": {
         "title": "DDPAI options",
+        "menu_options": {
+          "general": "General",
+          "rtsp": "RTSP / NVR"
+        }
+      },
+      "general": {
+        "title": "General",
         "data": {
           "scan_interval": "Poll interval",
-          "enable_media_browser": "Show the cloud album in the media browser"
+          "enable_media_browser": "Show the cloud album in the media browser",
+          "enable_live_view": "4G live view cameras",
+          "tutk_license_key": "TUTK SDK license key"
         },
         "data_description": {
-          "scan_interval": "How often state and position are read from the cloud."
+          "scan_interval": "How often state and position are read from the cloud.",
+          "enable_live_view": "Adds a live camera per lens. Watching wakes the camera and uses its 4G data; it stops 15 seconds after the last viewer leaves.",
+          "tutk_license_key": "The ThroughTek SDK license key of the DDPAI app, needed by the P2P library to open a live session."
+        }
+      },
+      "rtsp": {
+        "title": "RTSP for an NVR",
+        "description": "Lets an NVR (HiLook/Hikvision, Frigate, Blue Iris, Synology…) record the dashcam as an RTSP camera. Give it:\n\n{urls}\n\nThe dashcam streams one camera at a time: with both cameras on the stream they take turns while live. Live video uses the dashcam's 4G data (about 4 Mbit/s).",
+        "data": {
+          "rtsp_mode": "RTSP stream",
+          "rtsp_camera": "Cameras on the stream",
+          "rtsp_alternate_seconds": "Switch cameras every",
+          "rtsp_alerts": "Events that start live video",
+          "rtsp_alert_minutes": "Live video after an event",
+          "rtsp_driving": "Live video while driving",
+          "rtsp_driving_grace": "Keep live after driving stops",
+          "rtsp_port": "RTSP port",
+          "rtsp_username": "RTSP user name",
+          "rtsp_password": "RTSP password"
+        },
+        "data_description": {
+          "rtsp_mode": "Only when triggered: live video while a trigger is active, a still standby picture the rest of the time. Always: live video whenever the NVR is connected.",
+          "rtsp_camera": "Both: each camera gets its own address; while live they take turns.",
+          "rtsp_alerts": "Only in 'only when triggered'. Events arrive with the poll, so live video starts up to one poll interval after the event.",
+          "rtsp_port": "Not 8564 if the Proof Plus integration also serves RTSP on this box.",
+          "rtsp_username": "Leave empty for no login."
         }
       }
     }
@@ -56,6 +90,28 @@
       },
       "inside_fence": {
         "name": "Geofence {name}"
+      },
+      "rtsp_live": {
+        "name": "RTSP live video"
+      }
+    },
+    "button": {
+      "capture_front": {
+        "name": "Capture front"
+      },
+      "capture_rear": {
+        "name": "Capture rear"
+      },
+      "read_settings": {
+        "name": "Read remote settings"
+      }
+    },
+    "camera": {
+      "live_front": {
+        "name": "Live front"
+      },
+      "live_rear": {
+        "name": "Live rear"
       }
     },
     "image": {
@@ -76,6 +132,38 @@
       },
       "urgent_cabin": {
         "name": "Urgent event cabin"
+      },
+      "last_view_front": {
+        "name": "Last view front"
+      },
+      "last_view_rear": {
+        "name": "Last view rear"
+      }
+    },
+    "select": {
+      "live_lens": {
+        "name": "Live camera",
+        "state": {
+          "front": "Front",
+          "rear": "Rear"
+        }
+      },
+      "rtsp_mode": {
+        "name": "RTSP stream",
+        "state": {
+          "off": "Off",
+          "trigger": "Only when triggered",
+          "always": "Always"
+        }
+      },
+      "capture_sensitivity": {
+        "name": "Capture sensitivity",
+        "state": {
+          "high": "High",
+          "medium": "Medium",
+          "low": "Low",
+          "off": "Off"
+        }
       }
     },
     "sensor": {
@@ -129,6 +217,25 @@
       },
       "geofences": {
         "name": "Geofences"
+      }
+    },
+    "switch": {
+      "status_push": {
+        "name": "Status change notifications"
+      },
+      "rtsp_live": {
+        "name": "RTSP live"
+      },
+      "upload_captured_pictures": {
+        "name": "Upload captured pictures"
+      },
+      "auto_shutdown_after_parking": {
+        "name": "Shut down 15 min after parking"
+      }
+    },
+    "update": {
+      "firmware": {
+        "name": "Firmware"
       }
     }
   },
@@ -218,6 +325,40 @@
           "description": "From the geofence_id attribute of the camera's Geofence sensors."
         }
       }
+    },
+    "rtsp_trigger": {
+      "name": "RTSP: start live video",
+      "description": "Live video on the RTSP stream for a while (RTSP set to 'only when triggered').",
+      "fields": {
+        "device_id": {
+          "name": "Dashcam",
+          "description": "Leave empty for every dashcam."
+        },
+        "minutes": {
+          "name": "Minutes",
+          "description": "Default: the 'live video after an event' option."
+        }
+      }
+    },
+    "rtsp_stop": {
+      "name": "RTSP: stop live video",
+      "description": "End every RTSP trigger now; the stream goes back to the standby picture.",
+      "fields": {
+        "device_id": {
+          "name": "Dashcam",
+          "description": "Leave empty for every dashcam."
+        }
+      }
+    },
+    "read_settings": {
+      "name": "Read remote settings",
+      "description": "Read every remote setting from the dashcam (it must be online).",
+      "fields": {
+        "device_id": {
+          "name": "Dashcam",
+          "description": "The dashcam to read."
+        }
+      }
     }
   },
   "selector": {
@@ -225,6 +366,31 @@
       "options": {
         "enter": "Car enters",
         "leave": "Car leaves"
+      }
+    },
+    "rtsp_mode": {
+      "options": {
+        "off": "Off",
+        "trigger": "Only when triggered",
+        "always": "Always"
+      }
+    },
+    "rtsp_camera": {
+      "options": {
+        "front": "Front",
+        "rear": "Rear",
+        "both": "Both (take turns)"
+      }
+    },
+    "rtsp_alerts": {
+      "options": {
+        "collision": "Collision",
+        "parking_collision": "Parking collision",
+        "urgent_file": "New urgent clip",
+        "power_on": "Power on",
+        "remote_link": "Remote connection",
+        "high_temperature": "High temperature",
+        "low_battery": "Low battery"
       }
     }
   }
