@@ -10,11 +10,9 @@ thumbnail never starts a session.
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
-from homeassistant.components.http.auth import async_sign_path
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -24,13 +22,12 @@ from .const import CONF_ENABLE_LIVE_VIEW
 from .coordinator import DdpaiCoordinator
 from .entity import DdpaiEntity
 from .lastview import LastView
-from .live import LENSES, get_stream, live_path
+from .live import LENSES, TOKEN_PARAM, get_stream, live_path, live_token
 
 _LOGGER = logging.getLogger(__name__)
 
 # go2rtc / ffmpeg re-request the source on every new session, so a signature
 # only needs to outlive one viewing.
-SIGNATURE_LIFETIME = timedelta(hours=12)
 
 
 async def async_setup_entry(
@@ -93,11 +90,10 @@ class DdpaiLiveCamera(DdpaiEntity, Camera):
         api = self.hass.config.api
         if api is None:
             return None
-        path = async_sign_path(
-            self.hass,
-            live_path(self.coordinator.config_entry.entry_id, self._uuid, self._lens),
-            SIGNATURE_LIFETIME,
-        )
+        # Not async_sign_path: its signature expires and the stream reader keeps retrying
+        # the first URL, which got 127.0.0.1 banned (see live_token).
+        path = (f"{live_path(self.coordinator.config_entry.entry_id, self._uuid, self._lens)}"
+                f"?{TOKEN_PARAM}={live_token(self.hass)}")
         if api.use_ssl:
             # The certificate is for the public name, not 127.0.0.1: go2rtc's
             # httpx scheme skips verification; plain ffmpeg gets https.
