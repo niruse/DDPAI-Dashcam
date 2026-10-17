@@ -14,6 +14,7 @@ import io
 import json
 import logging
 import os
+import secrets
 import struct
 import time
 import platform
@@ -27,6 +28,7 @@ import aiohttp
 from aiohttp import web
 
 from homeassistant.components.http import HomeAssistantView
+from homeassistant.components.http.const import KEY_AUTHENTICATED
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -86,8 +88,25 @@ def keyframe_to_jpeg(access_unit: bytes) -> tuple[bytes, tuple[int, int]] | None
     return buffer.getvalue(), (frame.width, frame.height)
 
 
+TOKEN_PARAM = "token"
+
+
+def live_token(hass: HomeAssistant) -> str:
+    """Secret for the stream URL handed to Home Assistant's own stream reader.
+
+    A signed path (authSig) expires, but whatever opens the stream source -- the stream
+    worker, go2rtc -- keeps the first URL and retries it forever. Past the expiry every
+    retry was an invalid-auth request from 127.0.0.1, and five of them got Home Assistant
+    to ban localhost (2026-10-17). This one lives as long as the process: new at every start.
+    """
+    data = hass.data.setdefault(DOMAIN + "_live", {})
+    if "token" not in data:
+        data["token"] = secrets.token_urlsafe(32)
+    return data["token"]
+
+
 def live_path(entry_id: str, uuid: str, lens: str | None = None) -> str:
-    """Path of a camera's live stream (sign it before handing it out).
+    """Path of a camera's live stream (append ?token=live_token() before handing it out).
 
     With a lens, opening it switches the dashcam to that lens and serves only
     its frames; without, it follows the "Live camera" select.
@@ -535,7 +554,10 @@ class DdpaiLiveView(HomeAssistantView):
     url = URL_BASE + "/{entry_id}/{uuid}"
     extra_urls = [URL_BASE + "/{entry_id}/{uuid}/{lens}"]
     name = "api:ddpai:live"
-    requires_auth = True
+    # Checked in get(): a logged-in user OR the process token. Not requires_auth, because
+    # Home Assistant counts every refused request there toward an IP ban -- and the caller
+    # holding a stale URL is Home Assistant itself, on 127.0.0.1.
+    requires_auth = False
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
@@ -543,6 +565,9 @@ class DdpaiLiveView(HomeAssistantView):
     async def get(
         self, request: web.Request, entry_id: str, uuid: str, lens: str | None = None
     ) -> web.StreamResponse:
+        token = request.query.get(TOKEN_PARAM, "")
+        if not request.get(KEY_AUTHENTICATED) and not secrets.compare_digest(token, live_token(self.hass)):
+            return web.Response(status=401)
         coordinator = self.hass.data.get(DOMAIN, {}).get(entry_id)
         if coordinator is None or uuid not in (coordinator.data or {}):
             return web.Response(status=404)
