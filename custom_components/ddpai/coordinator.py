@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from datetime import timedelta
 from typing import Any
@@ -29,6 +30,7 @@ from .const import (
     ERR_USER_NOT_FOUND,
     EVENT_DEVICE,
     EVENT_NEW_MEDIA,
+    NO_POSITION,
     EVENT_TYPES,
     MAX_STATE_EVENTS,
     RES_TYPES,
@@ -75,6 +77,20 @@ def media_kind(item: dict[str, Any]) -> tuple[str, str]:
         return RES_TYPES.get(int(res), ("unknown", "image"))
     except (TypeError, ValueError):
         return ("unknown", "image")
+
+
+# A point reported while offline this far from the last real one is the cloud's
+# stand-in, not a move.
+PLACEHOLDER_MIN_M = 2000
+
+
+def _distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    rlat1, rlat2 = math.radians(lat1), math.radians(lat2)
+    a = (
+        math.sin((rlat2 - rlat1) / 2) ** 2
+        + math.cos(rlat1) * math.cos(rlat2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    )
+    return 2 * 6371000 * math.asin(math.sqrt(a))
 
 
 class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
@@ -135,9 +151,15 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self._store: Store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.events")
         self._store_loaded = False
         self._seen_media: dict[str, set[str]] = {}
-        # When each camera's reported position last changed (the server sends
-        # no fix time of its own).
+        # Each camera's last real position and when it last moved (the server
+        # sends no fix time of its own). Not simply the reported one: a while
+        # after the camera goes offline, and in the minute after it wakes before
+        # it has a fix, the cloud reports one fixed stand-in point instead (the
+        # same coordinates to the last digit, far from where the car is). Such a
+        # point is learned when it shows up while offline, far from the last
+        # real position, and ignored from then on. Both are kept in storage.
         self._position: dict[str, tuple[float, float, float]] = {}
+        self._placeholders: set[tuple[float, float]] = set()
         # Cameras on the account without their own 4G link (e.g. the MINI2X
         # cabin camera of a 3-channel set, whose files arrive via the Z60).
         self.other_devices: list[dict[str, Any]] = []
@@ -170,6 +192,11 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         data[uuid] = {**data[uuid], "fences": fences}
         self.async_set_updated_data(data)
 
+    def position(self, uuid: str) -> tuple[float, float] | None:
+        """The camera's last real position."""
+        pos = self._position.get(uuid)
+        return (pos[0], pos[1]) if pos else None
+
     def position_changed_at(self, uuid: str) -> float | None:
         """Epoch seconds when the reported position last moved."""
         pos = self._position.get(uuid)
@@ -184,6 +211,15 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             self.remote_settings = stored.get("settings") or {}
             self.remote_settings_read_at = stored.get("settings_read_at") or {}
             self.parked_captures = stored.get("parked_captures") or {}
+            self._position = {
+                k: (float(v[0]), float(v[1]), float(v[2]))
+                for k, v in (stored.get("position") or {}).items()
+                if isinstance(v, list) and len(v) == 3
+            }
+            self._placeholders = {
+                (round(float(p[0]), 6), round(float(p[1]), 6))
+                for p in stored.get("placeholders") or []
+            }
         try:
             devices = await self.client.async_get_devices()
         except DdpaiAuthError as err:
@@ -357,6 +393,8 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 "settings": self.remote_settings,
                 "settings_read_at": self.remote_settings_read_at,
                 "parked_captures": self.parked_captures,
+                "position": {k: list(v) for k, v in self._position.items()},
+                "placeholders": [list(p) for p in sorted(self._placeholders)],
             },
             5,
         )
@@ -426,9 +464,25 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         lat, lon = status.get("currLatitude"), status.get("currLongitude")
         if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
             return
+        if abs(lat) >= NO_POSITION or abs(lon) >= NO_POSITION or (lat, lon) == (0, 0):
+            return
+        key = (round(lat, 6), round(lon, 6))
+        if key in self._placeholders:
+            return
         old = self._position.get(uuid)
-        if old is None or (round(old[0], 6), round(old[1], 6)) != (round(lat, 6), round(lon, 6)):
-            self._position[uuid] = (lat, lon, time.time())
+        if old is not None and key == (round(old[0], 6), round(old[1], 6)):
+            return
+        online = status.get("mqtt") == 1 and status.get("status") in (1, 2, 3)
+        if not online and old is not None:
+            # An offline camera cannot move; a new point now is the stand-in —
+            # unless it is close (the last fix may have landed between polls).
+            if _distance_m(old[0], old[1], lat, lon) > PLACEHOLDER_MIN_M:
+                _LOGGER.debug("Ignoring stand-in position %s for %s", key, uuid)
+                self._placeholders.add(key)
+                self._save_store()
+                return
+        self._position[uuid] = (lat, lon, time.time())
+        self._save_store()
 
     def _fire_new_events(
         self, uuid: str, info: dict[str, Any], events: list[dict[str, Any]]

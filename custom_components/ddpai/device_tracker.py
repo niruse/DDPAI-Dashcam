@@ -9,7 +9,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import DdpaiConfigEntry
-from .const import NO_POSITION
 from .coordinator import DdpaiCoordinator, dev_config
 from .entity import DdpaiEntity
 
@@ -24,12 +23,6 @@ async def async_setup_entry(
         for uuid, cam in coordinator.data.items()
         if dev_config(cam.get("info") or {}).get("cameraHasGPS", 1)
     )
-
-
-def _coord(value: Any) -> float | None:
-    if not isinstance(value, (int, float)) or abs(value) >= NO_POSITION:
-        return None
-    return float(value)
 
 
 class DdpaiTracker(DdpaiEntity, TrackerEntity):
@@ -47,12 +40,13 @@ class DdpaiTracker(DdpaiEntity, TrackerEntity):
 
     @property
     def latitude(self) -> float | None:
-        lat, lon = _coord(self.status.get("currLatitude")), _coord(self.status.get("currLongitude"))
-        return lat if lat is not None and lon is not None and (lat, lon) != (0.0, 0.0) else None
+        pos = self.coordinator.position(self._uuid)
+        return pos[0] if pos else None
 
     @property
     def longitude(self) -> float | None:
-        return _coord(self.status.get("currLongitude")) if self.latitude is not None else None
+        pos = self.coordinator.position(self._uuid)
+        return pos[1] if pos else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
