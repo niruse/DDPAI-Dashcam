@@ -384,10 +384,15 @@ class DdpaiRtspFeed:
                 return False
             return True
 
+        last_kick = self._rtsp.kicked_at(uuid)
         try:
             units = await self._standby_units(wait=True) or []
             while self._readers:
                 now = loop.time()
+                if (kick := self._rtsp.kicked_at(uuid)) != last_kick:
+                    # The dashcam is back after a drop: reconnect now.
+                    last_kick = kick
+                    retry_at, failures = 0.0, 0
                 want = self._rtsp.want_live(uuid)
                 # With both lenses on the stream they take turns; the lens
                 # somebody is watching in Home Assistant keeps the turn.
@@ -661,6 +666,9 @@ class DdpaiRtsp:
         # that reason ends by itself, e.g. driving stopping).
         self._windows: dict[str, dict[str, float | None]] = {}
         self._driving_state: dict[str, bool] = {}
+        # When each dashcam came back after a drop: the feeds retry at once then
+        # instead of sitting out their back-off (up to 5 min).
+        self._kicks: dict[str, float] = {}
         self._feeds: dict[tuple[str, str], DdpaiRtspFeed] = {}
         self._stills: dict[tuple[str, str], tuple[str, bytes]] = {}
         # Newest parked photo time, and the last live view (JPEG, epoch) per lens.
@@ -972,13 +980,28 @@ class DdpaiRtsp:
         if event.data.get("album") == ALBUM_URGENT:
             self._extend(uuid, "alert", self._alert_seconds)
 
+    def kicked_at(self, uuid: str) -> float:
+        return self._kicks.get(uuid, 0.0)
+
     @callback
     def _on_update(self) -> None:
-        """Follow driving as polled, and keep the standby stills current."""
+        """Follow driving as polled, and keep the standby stills current.
+
+        Auto-renew through drops: the dashcam's 4G link drops for a minute or two
+        mid-drive and the cloud then says "offline" while the car keeps moving
+        (seen 2026-10-21). While its position still changes the drive goes on,
+        so live video stays wanted; and the moment it is back online the feeds
+        reconnect instead of waiting out their back-off.
+        """
         for uuid, cam in (self.coordinator.data or {}).items():
             status = (cam.get("status") or {}).get("status")
             if status is not None:
+                was = self._driving_state.get(uuid)
                 self._set_driving(uuid, status == 1)
+                if status == 1 and was is False:
+                    self._kicks[uuid] = time.monotonic()
+                if status != 1:
+                    self._keep_while_moving(uuid)
             if self.mode != RTSP_MODE_OFF:
                 self._refresh_stills(uuid, cam)
 
@@ -1018,6 +1041,21 @@ class DdpaiRtsp:
                 self._stills[key] = (item_id, data)
 
             self.hass.async_create_task(_fetch())
+
+    @callback
+    def _keep_while_moving(self, uuid: str) -> None:
+        """Hold the driving window open while the car is still moving."""
+        if not self._driving:
+            return
+        moved = self.coordinator.position_changed_at(uuid)
+        if not moved or time.time() - moved > self._grace_seconds:
+            return
+        windows = self._windows.setdefault(uuid, {})
+        until = moved + self._grace_seconds
+        current = windows.get("driving", 0.0)
+        if current is not None and until > (current or 0.0):
+            windows["driving"] = until
+            self._changed()
 
     @callback
     def _set_driving(self, uuid: str, on: bool) -> None:
