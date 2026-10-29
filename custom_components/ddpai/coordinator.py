@@ -83,6 +83,8 @@ def media_kind(item: dict[str, Any]) -> tuple[str, str]:
 # A point reported while offline this far from the last real one is the cloud's
 # stand-in, not a move.
 PLACEHOLDER_MIN_M = 2000
+# A new point further than this from the last one needs the next point to agree.
+JUMP_CONFIRM_M = 20000
 # A refused device list is retried after this, and the last good one used for up to
 # DEVICES_STALE_SECONDS (see DdpaiCoordinator._async_devices).
 DEVICES_RETRY_SECONDS = 3
@@ -165,6 +167,8 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         # real position, and ignored from then on. Both are kept in storage.
         self._position: dict[str, tuple[float, float, float]] = {}
         self._placeholders: set[tuple[float, float]] = set()
+        # uuid -> a far point waiting for the next one to confirm it.
+        self._jumps: dict[str, tuple[float, float]] = {}
         # Cameras on the account without their own 4G link (e.g. the MINI2X
         # cabin camera of a 3-channel set, whose files arrive via the Z60).
         self.other_devices: list[dict[str, Any]] = []
@@ -517,6 +521,17 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 self._placeholders.add(key)
                 self._save_store()
                 return
+        if old is not None and _distance_m(old[0], old[1], lat, lon) > JUMP_CONFIRM_M:
+            # A point this far from the last one is held until the next one
+            # agrees: waking up, the camera can send one wild fix (seen: 83 km
+            # out to sea, back home a minute later), while a real trip made
+            # offline arrives as a run of points near each other.
+            held = self._jumps.get(uuid)
+            if held is None or _distance_m(held[0], held[1], lat, lon) > JUMP_CONFIRM_M:
+                _LOGGER.debug("Holding far position %s for %s until confirmed", key, uuid)
+                self._jumps[uuid] = (lat, lon)
+                return
+        self._jumps.pop(uuid, None)
         self._position[uuid] = (lat, lon, time.time())
         self._save_store()
 
