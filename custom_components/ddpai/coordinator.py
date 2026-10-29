@@ -175,6 +175,8 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         # The last device list that arrived, and when (see _async_devices).
         self._devices: list[dict[str, Any]] = []
         self._devices_at = 0.0
+        # uuid -> when its status was last read in full (see _async_update_data).
+        self._camera_ok_at: dict[str, float] = {}
 
     @property
     def has_cabin_camera(self) -> bool:
@@ -273,7 +275,14 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                     raise ConfigEntryAuthFailed(str(err)) from err
                 raise UpdateFailed(f"DDPAI login failed: {err}") from err
             except DdpaiConnectionError as err:
+                # The same passing refusals as the device list (see
+                # _async_devices): keep what this camera showed for a while.
+                if old and time.monotonic() - self._camera_ok_at.get(uuid, 0.0) < DEVICES_STALE_SECONDS:
+                    _LOGGER.info("DDPAI camera %s not read, keeping the last state: %s", uuid, err)
+                    result[uuid] = {**old, "info": info}
+                    continue
                 raise UpdateFailed(f"DDPAI cloud unreachable: {err}") from err
+            self._camera_ok_at[uuid] = time.monotonic()
             result[uuid] = cam
         await self._update_push_switch()
         return result
