@@ -1,6 +1,7 @@
 """DataUpdateCoordinator for the DDPAI Dashcam integration."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -82,6 +83,12 @@ def media_kind(item: dict[str, Any]) -> tuple[str, str]:
 # A point reported while offline this far from the last real one is the cloud's
 # stand-in, not a move.
 PLACEHOLDER_MIN_M = 2000
+# A new point further than this from the last one needs the next point to agree.
+JUMP_CONFIRM_M = 20000
+# A refused device list is retried after this, and the last good one used for up to
+# DEVICES_STALE_SECONDS (see DdpaiCoordinator._async_devices).
+DEVICES_RETRY_SECONDS = 3
+DEVICES_STALE_SECONDS = 600
 
 
 def _distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -160,9 +167,16 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         # real position, and ignored from then on. Both are kept in storage.
         self._position: dict[str, tuple[float, float, float]] = {}
         self._placeholders: set[tuple[float, float]] = set()
+        # uuid -> a far point waiting for the next one to confirm it.
+        self._jumps: dict[str, tuple[float, float]] = {}
         # Cameras on the account without their own 4G link (e.g. the MINI2X
         # cabin camera of a 3-channel set, whose files arrive via the Z60).
         self.other_devices: list[dict[str, Any]] = []
+        # The last device list that arrived, and when (see _async_devices).
+        self._devices: list[dict[str, Any]] = []
+        self._devices_at = 0.0
+        # uuid -> when its status was last read in full (see _async_update_data).
+        self._camera_ok_at: dict[str, float] = {}
 
     @property
     def has_cabin_camera(self) -> bool:
@@ -221,7 +235,7 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 for p in stored.get("placeholders") or []
             }
         try:
-            devices = await self.client.async_get_devices()
+            devices = await self._async_devices()
         except DdpaiAuthError as err:
             if err.code in _FATAL_LOGIN:
                 raise ConfigEntryAuthFailed(str(err)) from err
@@ -261,10 +275,45 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                     raise ConfigEntryAuthFailed(str(err)) from err
                 raise UpdateFailed(f"DDPAI login failed: {err}") from err
             except DdpaiConnectionError as err:
+                # The same passing refusals as the device list (see
+                # _async_devices): keep what this camera showed for a while.
+                if old and time.monotonic() - self._camera_ok_at.get(uuid, 0.0) < DEVICES_STALE_SECONDS:
+                    _LOGGER.info("DDPAI camera %s not read, keeping the last state: %s", uuid, err)
+                    result[uuid] = {**old, "info": info}
+                    continue
                 raise UpdateFailed(f"DDPAI cloud unreachable: {err}") from err
+            self._camera_ok_at[uuid] = time.monotonic()
             result[uuid] = cam
         await self._update_push_switch()
         return result
+
+    async def _async_devices(self) -> list[dict[str, Any]]:
+        """The account's cameras, riding out the cloud's passing refusals.
+
+        A few times an hour the device list answers "error -2
+        CIRCUIT_BREAKERS" (the cloud shedding load) and works again seconds
+        later. Failing the whole poll for it turned every entity unavailable
+        and logged an error each time, so it is retried once, and if it still
+        fails the last list is used for up to DEVICES_STALE_SECONDS.
+        """
+        try:
+            devices = await self.client.async_get_devices()
+        except DdpaiAuthError:
+            raise
+        except DdpaiError as err:
+            _LOGGER.debug("DDPAI device list failed, retrying: %s", err)
+            await asyncio.sleep(DEVICES_RETRY_SECONDS)
+            try:
+                devices = await self.client.async_get_devices()
+            except DdpaiAuthError:
+                raise
+            except DdpaiError as again:
+                if self._devices and time.monotonic() - self._devices_at < DEVICES_STALE_SECONDS:
+                    _LOGGER.info("DDPAI device list failed twice, using the last one: %s", again)
+                    return self._devices
+                raise
+        self._devices, self._devices_at = devices, time.monotonic()
+        return devices
 
     async def _update_push_switch(self) -> None:
         now = time.monotonic()
@@ -481,6 +530,17 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 self._placeholders.add(key)
                 self._save_store()
                 return
+        if old is not None and _distance_m(old[0], old[1], lat, lon) > JUMP_CONFIRM_M:
+            # A point this far from the last one is held until the next one
+            # agrees: waking up, the camera can send one wild fix (seen: 83 km
+            # out to sea, back home a minute later), while a real trip made
+            # offline arrives as a run of points near each other.
+            held = self._jumps.get(uuid)
+            if held is None or _distance_m(held[0], held[1], lat, lon) > JUMP_CONFIRM_M:
+                _LOGGER.debug("Holding far position %s for %s until confirmed", key, uuid)
+                self._jumps[uuid] = (lat, lon)
+                return
+        self._jumps.pop(uuid, None)
         self._position[uuid] = (lat, lon, time.time())
         self._save_store()
 
