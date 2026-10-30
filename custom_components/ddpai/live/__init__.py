@@ -453,10 +453,12 @@ class LiveStream:
             if code:
                 self.last_error = self._stderr[-1] if self._stderr else f"exit code {code}"
                 _LOGGER.warning("Live view of %s ended: %s", self.uuid, " | ".join(self._stderr) or code)
-            for queue in list(self._viewers):
-                _close(queue)
-            self._viewers.clear()
-            self.current_lens = "pending"
+            if self._proc in (None, proc):
+                # Not when a newer session already took over: its viewers stay.
+                for queue in list(self._viewers):
+                    _close(queue)
+                self._viewers.clear()
+                self.current_lens = "pending"
             self._notify()
             # Keep the last view of each lens for the "last view" pictures.
             for lens in list(self.last_keyframe):
@@ -478,9 +480,12 @@ class LiveStream:
 
                 def _save() -> None:
                     os.makedirs(os.path.dirname(path), exist_ok=True)
-                    with open(path + ".tmp", "wb") as fh:
+                    # Its own temporary file: a capture and the live view can
+                    # save the same lens at the same moment.
+                    tmp = f"{path}.{secrets.token_hex(4)}.tmp"
+                    with open(tmp, "wb") as fh:
                         fh.write(result[0])
-                    os.replace(path + ".tmp", path)
+                    os.replace(tmp, path)
                     os.utime(path, (taken, taken))
 
                 await self.hass.async_add_executor_job(_save)
@@ -511,6 +516,10 @@ class LiveStream:
     async def async_stop(self) -> None:
         self._idle_handle = None
         proc, self._proc = self._proc, None
+        # This session's own readers, taken now: while it shuts down a holder
+        # can already start the next session, whose readers must keep running
+        # (cancelling those left the new producer blocked on a full pipe).
+        tasks, self._tasks = self._tasks, []
         if proc and proc.returncode is None:
             proc.terminate()
             try:
@@ -518,11 +527,11 @@ class LiveStream:
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
-        for task in self._tasks:
+        for task in tasks:
             if not task.done():
                 task.cancel()
-        self._tasks = []
-        self.current_lens = "pending"
+        if self._proc is None:
+            self.current_lens = "pending"
         self._notify()
 
 
