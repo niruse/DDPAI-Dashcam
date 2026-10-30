@@ -23,6 +23,11 @@ CONF_TUTK_LICENSE_KEY: Final = "tutk_license_key"
 # the cloud album's (False; the camera uploads one only now and then).
 CONF_PARKED_CAPTURE: Final = "parked_capture"
 DEFAULT_PARKED_CAPTURE: Final = False
+# While driving, capture both lenses this often; the last capture before the
+# car stops is the parked photo (the camera often goes straight from driving
+# to offline, too fast to capture at the stop itself).
+CONF_PARKED_CAPTURE_MINUTES: Final = "parked_capture_minutes"
+DEFAULT_PARKED_CAPTURE_MINUTES: Final = 5
 
 # Live view: TUTK connect auth key the DDPAI app uses for every camera.
 TUTK_AUTH_KEY: Final = "JSzk8b3P"

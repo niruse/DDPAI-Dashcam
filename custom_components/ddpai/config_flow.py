@@ -41,7 +41,9 @@ from .const import (
     CONF_ENABLE_LIVE_VIEW,
     CONF_ENABLE_MEDIA_BROWSER,
     CONF_PARKED_CAPTURE,
+    CONF_PARKED_CAPTURE_MINUTES,
     DEFAULT_PARKED_CAPTURE,
+    DEFAULT_PARKED_CAPTURE_MINUTES,
     CONF_SCAN_INTERVAL,
     CONF_TUTK_LICENSE_KEY,
     CONF_RTSP_ALERT_MINUTES,
@@ -266,6 +268,9 @@ class DdpaiOptionsFlow(OptionsFlow):
         """Polling, media browser and live view."""
         if user_input is not None:
             user_input[CONF_SCAN_INTERVAL] = int(user_input[CONF_SCAN_INTERVAL])
+            user_input[CONF_PARKED_CAPTURE_MINUTES] = int(
+                user_input.get(CONF_PARKED_CAPTURE_MINUTES, DEFAULT_PARKED_CAPTURE_MINUTES)
+            )
             key = "".join(user_input.get(CONF_TUTK_LICENSE_KEY, "").split())
             # A blank field keeps the stored key (the form shows it masked).
             user_input[CONF_TUTK_LICENSE_KEY] = key or self.config_entry.options.get(CONF_TUTK_LICENSE_KEY, "")
@@ -299,6 +304,12 @@ class DdpaiOptionsFlow(OptionsFlow):
                         CONF_PARKED_CAPTURE,
                         default=options.get(CONF_PARKED_CAPTURE, DEFAULT_PARKED_CAPTURE),
                     ): BooleanSelector(),
+                    vol.Required(
+                        CONF_PARKED_CAPTURE_MINUTES,
+                        default=options.get(CONF_PARKED_CAPTURE_MINUTES, DEFAULT_PARKED_CAPTURE_MINUTES),
+                    ): NumberSelector(
+                        NumberSelectorConfig(min=1, max=60, step=1, unit_of_measurement="min", mode=NumberSelectorMode.BOX)
+                    ),
                     vol.Optional(
                         CONF_TUTK_LICENSE_KEY,
                         description={"suggested_value": options.get(CONF_TUTK_LICENSE_KEY, "")},

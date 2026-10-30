@@ -21,8 +21,10 @@ from .const import (
     ALBUM_REFRESH_SECONDS,
     ALBUMS,
     CONF_PARKED_CAPTURE,
+    CONF_PARKED_CAPTURE_MINUTES,
     CONF_SCAN_INTERVAL,
     DEFAULT_PARKED_CAPTURE,
+    DEFAULT_PARKED_CAPTURE_MINUTES,
     DEFAULT_SCAN_INTERVAL,
     FENCE_REFRESH_SECONDS,
     DOMAIN,
@@ -137,6 +139,8 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self._settings_read_online: set[str] = set()
         # Parked photos taken by the integration: uuid -> lens -> {"path", "time"}.
         self.parked_captures: dict[str, dict[str, dict[str, Any]]] = {}
+        self._capturing: set[str] = set()
+        self._captured_at: dict[str, float] = {}
         self.p2p_locks: dict[str, Any] = {}
         # The RTSP output for NVRs (rtsp.DdpaiRtsp), and the options it runs with.
         self.rtsp: Any = None
@@ -340,6 +344,7 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             self._note_position(uuid, cam["status"])
             self._note_state(uuid, before, cam["status"])
             self._maybe_read_settings(uuid, cam["status"])
+            self._maybe_capture_driving(uuid, cam["status"])
         except (DdpaiConnectionError, DdpaiAuthError):
             raise
         except DdpaiError as err:
@@ -429,8 +434,10 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             return
         events.insert(0, {"eventType": STATE_EVENTS[now], "time": int(when), "recordType": "state"})
         del events[MAX_STATE_EVENTS:]
-        if before == 1 and now != 1 and self.config_entry.options.get(CONF_PARKED_CAPTURE, DEFAULT_PARKED_CAPTURE):
-            self.hass.async_create_background_task(self._async_parked_capture(uuid), f"{DOMAIN} parked capture {uuid}")
+        if before == 1 and now != 1 and self._parked_capture_on:
+            # One last try at the stop itself (often too late: the camera may
+            # already be off; the captures while driving cover that).
+            self._start_parked_capture(uuid)
         self._last_state[uuid] = now
         self._save_store()
 
@@ -472,8 +479,33 @@ class DdpaiCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self._save_store()
         self.async_update_listeners()
 
+    @property
+    def _parked_capture_on(self) -> bool:
+        return bool(self.config_entry.options.get(CONF_PARKED_CAPTURE, DEFAULT_PARKED_CAPTURE))
+
+    def _maybe_capture_driving(self, uuid: str, status: dict[str, Any]) -> None:
+        """While driving, capture both lenses every few minutes (parked photo option)."""
+        if not self._parked_capture_on or status.get("status") != 1:
+            return
+        minutes = int(self.config_entry.options.get(CONF_PARKED_CAPTURE_MINUTES, DEFAULT_PARKED_CAPTURE_MINUTES))
+        if time.monotonic() - self._captured_at.get(uuid, -1e9) >= minutes * 60:
+            self._start_parked_capture(uuid)
+
+    def _start_parked_capture(self, uuid: str) -> None:
+        if uuid in self._capturing:
+            return
+        self._capturing.add(uuid)
+        self._captured_at[uuid] = time.monotonic()
+        self.hass.async_create_background_task(self._async_parked_capture(uuid), f"{DOMAIN} parked capture {uuid}")
+
     async def _async_parked_capture(self, uuid: str) -> None:
-        """The car stopped: take the parked photo of each lens ourselves."""
+        """Take the parked photo of each lens ourselves."""
+        try:
+            await self._async_capture_lenses(uuid)
+        finally:
+            self._capturing.discard(uuid)
+
+    async def _async_capture_lenses(self, uuid: str) -> None:
         from homeassistant.exceptions import HomeAssistantError
 
         from .remote_entities import async_capture
